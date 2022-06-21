@@ -16,6 +16,7 @@ def test_multiple_withdrawals(token, gov, Vault, TestStrategy, chain):
         {"from": gov},
     )
     vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
+    vault.approveUser(gov, {'from': gov})
 
     token.approve(vault, 2 ** 256 - 1, {"from": gov})
     vault.deposit(1_000_000, {"from": gov})
@@ -69,6 +70,7 @@ def test_forced_withdrawal(token, gov, vault, TestStrategy, rando, chain):
     # rando and gov deposits tokens to the vault
     token.approve(vault, 2 ** 256 - 1, {"from": gov})
     token.approve(vault, 2 ** 256 - 1, {"from": rando})
+    vault.approveUser(rando, {'from': gov})
     vault.deposit(1000, {"from": rando})
     vault.deposit(4000, {"from": gov})
 
@@ -147,6 +149,7 @@ def test_progressive_withdrawal(
         vault.addStrategy(s, 1000, 0, 10, 1000, {"from": gov})
 
     token.approve(vault, 2 ** 256 - 1, {"from": gov})
+    vault.approveUser(gov, {'from': gov})
     vault.deposit(1000, {"from": gov})
     token.approve(gov, 2 ** 256 - 1, {"from": gov})
     token.transferFrom(
@@ -210,6 +213,7 @@ def test_withdrawal_with_empty_queue(
 
     strategy = gov.deploy(TestStrategy, vault)
     vault.addStrategy(strategy, 1000, 0, 10, 1000, {"from": gov})
+    vault.approveUser(gov, {'from': gov})
 
     token.approve(vault, 2 ** 256 - 1, {"from": gov})
     vault.deposit(1000, {"from": gov})
@@ -269,6 +273,7 @@ def test_withdrawal_with_reentrancy(
     )
 
     vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
+    vault.approveUser(gov, {'from': gov})
 
     strategy = gov.deploy(TestStrategy, vault)
     vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 1000, {"from": gov})
@@ -434,6 +439,7 @@ def test_withdraw_not_enough_funds_with_gains(
     vault.setPerformanceFee(0, {"from": gov})
     vault.updateStrategyPerformanceFee(strategy, 0, {"from": gov})
 
+    chain.sleep(1)
     strategy.harvest()
 
     balance = token.balanceOf(strategy)
@@ -448,3 +454,33 @@ def test_withdraw_not_enough_funds_with_gains(
     priceAfter = vault.pricePerShare()
 
     assert priceBefore <= priceAfter  # with decimals=2 price remains the same.
+
+
+def test_allowlist_approve(token, gov, vault, TestStrategy, rando, chain):
+    vault.setManagementFee(0, {"from": gov})  # Just makes it easier later
+    # Add strategies
+    strategies = [gov.deploy(TestStrategy, vault) for _ in range(5)]
+    for s in strategies:
+        vault.addStrategy(s, 2_000, 0, 10 ** 21, 1000, {"from": gov})
+        
+    # Send tokens to random user
+    token.approve(gov, 2 ** 256 - 1, {"from": gov})
+    token.transferFrom(gov, rando, 2000, {"from": gov})
+    assert token.balanceOf(rando) == 2000
+    token.approve(vault, 2 ** 256 - 1, {"from": rando})
+    
+    with brownie.reverts():
+        vault.deposit(1000, {"from": rando})
+    
+    vault.approveUser(rando, {'from': gov})
+    vault.deposit(1000, {"from": rando})
+    
+    # revoke
+    vault.revokeUser(rando, {'from': gov})
+    with brownie.reverts():
+        vault.deposit(1000, {"from": rando})
+        
+    # Withdrawal should still work
+    vault.withdraw({"from": rando})
+    
+    

@@ -68,6 +68,7 @@ totalSupply: public(uint256)
 token: public(ERC20)
 governance: public(address)
 management: public(address)
+approver: public(address)
 guardian: public(address)
 pendingGovernance: address
 
@@ -136,6 +137,9 @@ event UpdateGovernance:
 
 event UpdateManagement:
     management: address # New active manager
+
+event UpdateApprover:
+    approver: address # New active approver
 
 event UpdateRewards:
     rewards: address # New active rewards recipient
@@ -227,6 +231,7 @@ activation: public(uint256)  # block.timestamp of contract deployment
 lockedProfit: public(uint256) # how much profit is locked and cant be withdrawn
 lockedProfitDegradation: public(uint256) # rate per block of degradation. DEGRADATION_COEFFICIENT is 100% per block
 rewards: public(address)  # Rewards contract where Governance fees are sent to
+allowlist: public(HashMap[address, bool])
 # Governance Fee for management of Vault (given to `rewards`)
 managementFee: public(uint256)
 # Governance Fee for performance of Vault (given to `rewards`)
@@ -299,6 +304,8 @@ def initialize(
     log UpdateGovernance(governance)
     self.management = management
     log UpdateManagement(management)
+    self.approver = management
+    log UpdateApprover(management)
     self.rewards = rewards
     log UpdateRewards(rewards)
     self.guardian = guardian
@@ -433,6 +440,19 @@ def setRewards(rewards: address):
     assert not (rewards in [self, ZERO_ADDRESS])
     self.rewards = rewards
     log UpdateRewards(rewards)
+
+
+@external
+def setApprover(approver: address):
+    """
+    @notice
+        Changes the approver address. The approver has permission
+        to call approveUser & revokeUser only.
+    """
+    assert msg.sender == self.governance
+    assert not (approver in [self, ZERO_ADDRESS])
+    self.approver = approver
+    log UpdateApprover(approver)
 
 
 @external
@@ -849,6 +869,34 @@ def _issueSharesForAmount(to: address, amount: uint256) -> uint256:
 
     return shares
 
+@external
+def approveUser(user: address):
+    """
+    @notice
+        Adds user to the allowlist, allowing the user to deposit
+
+
+        This may only be called by governance, management, or approver.
+    @param user
+        The address of the user you with to revoke
+    """
+    assert msg.sender in [self.management, self.governance, self.approver]
+    self.allowlist[user] = True
+
+@external
+def revokeUser(user: address):
+    """
+    @notice
+        Removes user to the allowlist, inhibiting the user from depositing
+
+        This may only be called by governance or management, or approver.
+    @param user
+        The address of the user you with to revoke
+    """
+    assert msg.sender in [self.management, self.governance, self.approver]
+    self.allowlist[user] = False
+
+
 
 @external
 @nonreentrant("withdraw")
@@ -886,6 +934,7 @@ def deposit(_amount: uint256 = MAX_UINT256, recipient: address = msg.sender) -> 
     """
     assert not self.emergencyShutdown  # Deposits are locked out
     assert recipient not in [self, ZERO_ADDRESS]
+    assert self.allowlist[recipient] == True
 
     amount: uint256 = _amount
 
