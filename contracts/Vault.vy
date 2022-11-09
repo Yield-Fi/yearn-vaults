@@ -71,6 +71,7 @@ management: public(address)
 approver: public(address)
 guardian: public(address)
 pendingGovernance: address
+partner : public(address)
 
 struct StrategyParams:
     performanceFee: uint256  # Strategist's fee (basis points)
@@ -141,6 +142,9 @@ event UpdateManagement:
 event UpdateApprover:
     approver: address # New active approver
 
+event UpdatePartner:
+    partner : address # New active partner
+
 event UpdateRewards:
     rewards: address # New active rewards recipient
 
@@ -155,6 +159,9 @@ event UpdatePerformanceFee:
 
 event UpdateManagementFee:
     managementFee: uint256 # New active management fee
+
+event UpdatePartnerFee:
+    partnerFee: uint256 # New active partner fee
 
 
 event UpdateGuardian:
@@ -236,6 +243,8 @@ allowlist: public(HashMap[address, bool])
 managementFee: public(uint256)
 # Governance Fee for performance of Vault (given to `rewards`)
 performanceFee: public(uint256)
+# Partner fee
+partnerFee: public(uint256)
 MAX_BPS: constant(uint256) = 10_000  # 100%, or 10k basis points
 # NOTE: A four-century period will be missing 3 of its 100 Julian leap years, leaving 97.
 #       So the average year has 365 + 97/400 = 365.2425 days
@@ -260,6 +269,9 @@ def initialize(
     symbolOverride: String[32],
     guardian: address = msg.sender,
     management: address =  msg.sender,
+    partner: address,
+    partnerFee : uint256,
+    healthCheck: address = ZERO_ADDRESS
 ):
     """
     @notice
@@ -314,6 +326,13 @@ def initialize(
     log UpdatePerformanceFee(convert(1000, uint256))
     self.managementFee = 200  # 2% per year
     log UpdateManagementFee(convert(200, uint256))
+    self.partner = partner
+    log UpdatePartner (partner)
+    self.partnerFee = partnerFee
+    log UpdatePartnerFee(partnerFee)
+    self.healthCheck = healthCheck
+    log UpdateHealthCheck(healthCheck)
+
     self.lastReport = block.timestamp
     self.activation = block.timestamp
     self.lockedProfitDegradation = convert(DEGRADATION_COEFFICIENT * 46 / 10 ** 6 , uint256) # 6 hours in blocks
@@ -421,6 +440,19 @@ def setManagement(management: address):
     self.management = management
     log UpdateManagement(management)
 
+@external
+def setPartner(partner: address):
+    """
+    @notice
+        Changes the partner address.
+        Partner can change the partner fee.
+
+        This may only be called by governance.
+    @param partner The address to use for partner.
+    """
+    assert msg.sender == self.governance
+    self.partner = partner
+    log UpdatePartner(partner)
 
 @external
 def setRewards(rewards: address):
@@ -516,6 +548,20 @@ def setManagementFee(fee: uint256):
     assert fee <= MAX_BPS
     self.managementFee = fee
     log UpdateManagementFee(fee)
+
+@external
+def setPartnerFee(fee: uint256):
+    """
+    @notice
+        Used to change the value of `partnerFee`.
+
+        This may only be called by governance or partner.
+    @param fee The new management fee to use.
+    """
+    assert msg.sender == self.governance or msg.sender == self.partner
+    assert fee <= MAX_BPS
+    self.partnerFee = fee
+    log UpdatePartnerFee(fee)
 
 
 @external
@@ -1678,11 +1724,14 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
     # NOTE: Unlikely to throw unless strategy reports >1e72 harvest profit
     performance_fee: uint256 = gain * self.performanceFee / MAX_BPS
 
+    # NOTE : Partner fee
+    partner_fee: uint256 = (gain - performance_fee) * self.partnerFee / MAX_BPS
+
     # NOTE: This must be called prior to taking new collateral,
     #       or the calculation will be wrong!
     # NOTE: This must be done at the same time, to ensure the relative
     #       ratio of governance_fee : strategist_fee is kept intact
-    total_fee: uint256 = performance_fee + strategist_fee + management_fee
+    total_fee: uint256 = performance_fee + strategist_fee + management_fee + partner_fee
     # ensure total_fee is not more than gain
     if total_fee > gain:
         total_fee = gain
@@ -1700,6 +1749,15 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
             self._transfer(self, strategy, strategist_reward)
             # NOTE: Strategy distributes rewards at the end of harvest()
         # NOTE: Governance earns any dust leftover from flooring math above
+        # Send partner fee rewards as new shares in this Vault
+        if partner_fee > 0:
+            partner_reward : uint256 = (
+                partner_fee
+                * reward
+                /total_fee
+            )
+            self._transfer(self, partner, partner_reward)
+        # Note
         if self.balanceOf[self] > 0:
             self._transfer(self, self.rewards, self.balanceOf[self])
     return total_fee
