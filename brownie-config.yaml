@@ -22,3 +22,7 @@ reports:
     - SafeMath
     - SafeERC20
     - Address
+dotenv : .env
+wallets :
+  from_key: ${PRIVATE_KEY}
+  t_from_key : ${T_PRIVATE_KEY}

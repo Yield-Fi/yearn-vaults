@@ -12,6 +12,10 @@ def gov(accounts):
 def rewards(accounts):
     yield accounts[1]
 
+@pytest.fixture
+def rewards(accounts):
+    yield accounts[1]
+
 
 @pytest.fixture
 def guardian(accounts):

@@ -57,6 +57,20 @@ interface Strategy:
     def withdraw(_amount: uint256) -> uint256: nonpayable
     def migrate(_newStrategy: address): nonpayable
 
+interface VaultConfig:
+    def MAX_BPS() -> uint256: view
+    def getPartnerFee(_vault: address) -> uint256: view
+    def getManagementFee( _vault: address) -> uint256: view
+    def getPerformanceFee(_vault: address) -> uint256: view
+    def governance() -> address: view
+    def partner() -> address: view
+    def management() -> address: view
+    def guardian() -> address: view
+    def approver() -> address: view
+    def rewards() -> address: view
+    def partnerFeeRecipient() -> address: view
+    def isWhitelisted(_customer: address) -> bool: view
+
 name: public(String[64])
 symbol: public(String[32])
 decimals: public(uint256)
@@ -66,12 +80,9 @@ allowance: public(HashMap[address, HashMap[address, uint256]])
 totalSupply: public(uint256)
 
 token: public(ERC20)
-governance: public(address)
-management: public(address)
-approver: public(address)
-guardian: public(address)
-pendingGovernance: address
-partner : public(address)
+
+config: public(address)
+healthCheck: public(address)
 
 struct StrategyParams:
     performanceFee: uint256  # Strategist's fee (basis points)
@@ -131,70 +142,30 @@ event StrategyReported:
     debtAdded: uint256
     debtRatio: uint256
 
-
-event UpdateGovernance:
-    governance: address # New active governance
-
-
-event UpdateManagement:
-    management: address # New active manager
-
-event UpdateApprover:
-    approver: address # New active approver
-
-event UpdatePartner:
-    partner : address # New active partner
-
-event UpdateRewards:
-    rewards: address # New active rewards recipient
-
-
 event UpdateDepositLimit:
     depositLimit: uint256 # New active deposit limit
-
-
-event UpdatePerformanceFee:
-    performanceFee: uint256 # New active performance fee
-
-
-event UpdateManagementFee:
-    managementFee: uint256 # New active management fee
-
-event UpdatePartnerFee:
-    partnerFee: uint256 # New active partner fee
-
-
-event UpdateGuardian:
-    guardian: address # Address of the active guardian
-
 
 event EmergencyShutdown:
     active: bool # New emergency shutdown state (if false, normal operation enabled)
 
-
 event UpdateWithdrawalQueue:
     queue: address[MAXIMUM_STRATEGIES] # New active withdrawal queue
-
 
 event StrategyUpdateDebtRatio:
     strategy: indexed(address) # Address of the strategy for the debt ratio adjustment
     debtRatio: uint256 # The new debt limit for the strategy (in BPS of total assets)
 
-
 event StrategyUpdateMinDebtPerHarvest:
     strategy: indexed(address) # Address of the strategy for the rate limit adjustment
     minDebtPerHarvest: uint256  # Lower limit on the increase of debt since last harvest
-
 
 event StrategyUpdateMaxDebtPerHarvest:
     strategy: indexed(address) # Address of the strategy for the rate limit adjustment
     maxDebtPerHarvest: uint256  # Upper limit on the increase of debt since last harvest
 
-
 event StrategyUpdatePerformanceFee:
     strategy: indexed(address) # Address of the strategy for the performance fee adjustment
     performanceFee: uint256 # The new performance fee for the strategy
-
 
 event StrategyMigrated:
     oldVersion: indexed(address) # Old version of the strategy to be migrated
@@ -212,6 +183,8 @@ event StrategyRemovedFromQueue:
 event StrategyAddedToQueue:
     strategy: indexed(address) # Address of the strategy that is added to the withdrawal queue
 
+event UpdateHealthCheck:
+    healthCheck: indexed(address)
 
 # NOTE: Track the total for overhead targeting purposes
 strategies: public(HashMap[address, StrategyParams])
@@ -237,14 +210,6 @@ lastReport: public(uint256)  # block.timestamp of last report
 activation: public(uint256)  # block.timestamp of contract deployment
 lockedProfit: public(uint256) # how much profit is locked and cant be withdrawn
 lockedProfitDegradation: public(uint256) # rate per block of degradation. DEGRADATION_COEFFICIENT is 100% per block
-rewards: public(address)  # Rewards contract where Governance fees are sent to
-allowlist: public(HashMap[address, bool])
-# Governance Fee for management of Vault (given to `rewards`)
-managementFee: public(uint256)
-# Governance Fee for performance of Vault (given to `rewards`)
-performanceFee: public(uint256)
-# Partner fee
-partnerFee: public(uint256)
 MAX_BPS: constant(uint256) = 10_000  # 100%, or 10k basis points
 # NOTE: A four-century period will be missing 3 of its 100 Julian leap years, leaving 97.
 #       So the average year has 365 + 97/400 = 365.2425 days
@@ -259,19 +224,13 @@ DOMAIN_SEPARATOR: public(bytes32)
 DOMAIN_TYPE_HASH: constant(bytes32) = keccak256('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)')
 PERMIT_TYPE_HASH: constant(bytes32) = keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)")
 
-
 @external
 def initialize(
     token: address,
-    governance: address,
-    rewards: address,
     nameOverride: String[64],
     symbolOverride: String[32],
-    guardian: address = msg.sender,
-    management: address =  msg.sender,
-    partner: address,
-    partnerFee : uint256,
-    healthCheck: address = ZERO_ADDRESS
+    configAddress: address,
+    healthCheck: address = ZERO_ADDRESS,
 ):
     """
     @notice
@@ -291,12 +250,10 @@ def initialize(
         The token used by the vault should not change balances outside transfers and 
         it must transfer the exact amount requested. Fee on transfer and rebasing are not supported.
     @param token The token that may be deposited into this Vault.
-    @param governance The address authorized for governance interactions.
-    @param rewards The address to distribute rewards to.
-    @param management The address of the vault manager.
     @param nameOverride Specify a custom Vault name. Leave empty for default choice.
     @param symbolOverride Specify a custom Vault symbol name. Leave empty for default choice.
-    @param guardian The address authorized for guardian interactions. Defaults to caller.
+    @param configAddress Vault Config Address.
+    @param healthCheck Health Check address.
     """
     assert self.activation == 0  # dev: no devops199
     self.token = ERC20(token)
@@ -312,24 +269,8 @@ def initialize(
     self.decimals = decimals
     assert decimals < 256 # dev: see VVE-2020-0001
 
-    self.governance = governance
-    log UpdateGovernance(governance)
-    self.management = management
-    log UpdateManagement(management)
-    self.approver = management
-    log UpdateApprover(management)
-    self.rewards = rewards
-    log UpdateRewards(rewards)
-    self.guardian = guardian
-    log UpdateGuardian(guardian)
-    self.performanceFee = 1000  # 10% of yield (per Strategy)
-    log UpdatePerformanceFee(convert(1000, uint256))
-    self.managementFee = 200  # 2% per year
-    log UpdateManagementFee(convert(200, uint256))
-    self.partner = partner
-    log UpdatePartner (partner)
-    self.partnerFee = partnerFee
-    log UpdatePartnerFee(partnerFee)
+    self.config = configAddress
+
     self.healthCheck = healthCheck
     log UpdateHealthCheck(healthCheck)
 
@@ -346,7 +287,6 @@ def initialize(
             convert(self, bytes32)
         )
     )
-
 
 @pure
 @external
@@ -373,7 +313,7 @@ def setName(name: String[42]):
         This may only be called by governance.
     @param name The new name to use.
     """
-    assert msg.sender == self.governance
+    assert msg.sender == VaultConfig(self.config).governance()
     self.name = name
 
 
@@ -386,106 +326,8 @@ def setSymbol(symbol: String[20]):
         This may only be called by governance.
     @param symbol The new symbol to use.
     """
-    assert msg.sender == self.governance
+    assert msg.sender == VaultConfig(self.config).governance()
     self.symbol = symbol
-
-
-# 2-phase commit for a change in governance
-@external
-def setGovernance(governance: address):
-    """
-    @notice
-        Nominate a new address to use as governance.
-
-        The change does not go into effect immediately. This function sets a
-        pending change, and the governance address is not updated until
-        the proposed governance address has accepted the responsibility.
-
-        This may only be called by the current governance address.
-    @param governance The address requested to take over Vault governance.
-    """
-    assert msg.sender == self.governance
-    self.pendingGovernance = governance
-
-
-@external
-def acceptGovernance():
-    """
-    @notice
-        Once a new governance address has been proposed using setGovernance(),
-        this function may be called by the proposed address to accept the
-        responsibility of taking over governance for this contract.
-
-        This may only be called by the proposed governance address.
-    @dev
-        setGovernance() should be called by the existing governance address,
-        prior to calling this function.
-    """
-    assert msg.sender == self.pendingGovernance
-    self.governance = msg.sender
-    log UpdateGovernance(msg.sender)
-
-
-@external
-def setManagement(management: address):
-    """
-    @notice
-        Changes the management address.
-        Management is able to make some investment decisions adjusting parameters.
-
-        This may only be called by governance.
-    @param management The address to use for managing.
-    """
-    assert msg.sender == self.governance
-    self.management = management
-    log UpdateManagement(management)
-
-@external
-def setPartner(partner: address):
-    """
-    @notice
-        Changes the partner address.
-        Partner can change the partner fee.
-
-        This may only be called by governance.
-    @param partner The address to use for partner.
-    """
-    assert msg.sender == self.governance
-    self.partner = partner
-    log UpdatePartner(partner)
-
-@external
-def setRewards(rewards: address):
-    """
-    @notice
-        Changes the rewards address. Any distributed rewards
-        will cease flowing to the old address and begin flowing
-        to this address once the change is in effect.
-
-        This will not change any Strategy reports in progress, only
-        new reports made after this change goes into effect.
-
-        This may only be called by governance.
-    @param rewards The address to use for collecting rewards.
-    """
-    assert msg.sender == self.governance
-    assert not (rewards in [self, ZERO_ADDRESS])
-    self.rewards = rewards
-    log UpdateRewards(rewards)
-
-
-@external
-def setApprover(approver: address):
-    """
-    @notice
-        Changes the approver address. The approver has permission
-        to call approveUser & revokeUser only.
-    """
-    assert msg.sender == self.governance
-    assert not (approver in [self, ZERO_ADDRESS])
-    self.approver = approver
-    log UpdateApprover(approver)
-
 
 @external
 def setLockedProfitDegradation(degradation: uint256):
@@ -494,7 +336,7 @@ def setLockedProfitDegradation(degradation: uint256):
         Changes the locked profit degradation.
     @param degradation The rate of degradation in percent per second scaled to 1e18.
     """
-    assert msg.sender == self.governance
+    assert msg.sender == VaultConfig(self.config).governance()
     # Since "degradation" is of type uint256 it can never be less than zero
     assert degradation <= DEGRADATION_COEFFICIENT
     self.lockedProfitDegradation = degradation
@@ -513,70 +355,9 @@ def setDepositLimit(limit: uint256):
         This may only be called by governance.
     @param limit The new deposit limit to use.
     """
-    assert msg.sender == self.governance
+    assert msg.sender == VaultConfig(self.config).governance()
     self.depositLimit = limit
     log UpdateDepositLimit(limit)
-
-
-@external
-def setPerformanceFee(fee: uint256):
-    """
-    @notice
-        Used to change the value of `performanceFee`.
-
-        Should set this value below the maximum strategist performance fee.
-
-        This may only be called by governance.
-    @param fee The new performance fee to use.
-    """
-    assert msg.sender == self.governance
-    assert fee <= MAX_BPS / 2
-    self.performanceFee = fee
-    log UpdatePerformanceFee(fee)
-
-
-@external
-def setManagementFee(fee: uint256):
-    """
-    @notice
-        Used to change the value of `managementFee`.
-
-        This may only be called by governance.
-    @param fee The new management fee to use.
-    """
-    assert msg.sender == self.governance
-    assert fee <= MAX_BPS
-    self.managementFee = fee
-    log UpdateManagementFee(fee)
-
-@external
-def setPartnerFee(fee: uint256):
-    """
-    @notice
-        Used to change the value of `partnerFee`.
-
-        This may only be called by governance or partner.
-    @param fee The new management fee to use.
-    """
-    assert msg.sender == self.governance or msg.sender == self.partner
-    assert fee <= MAX_BPS
-    self.partnerFee = fee
-    log UpdatePartnerFee(fee)
-
-
-@external
-def setGuardian(guardian: address):
-    """
-    @notice
-        Used to change the address of `guardian`.
-
-        This may only be called by governance or the existing guardian.
-    @param guardian The new guardian address to use.
-    """
-    assert msg.sender in [self.guardian, self.governance]
-    self.guardian = guardian
-    log UpdateGuardian(guardian)
-
 
 @external
 def setEmergencyShutdown(active: bool):
@@ -600,9 +381,11 @@ def setEmergencyShutdown(active: bool):
         goes back into Normal Operation.
     """
     if active:
-        assert msg.sender in [self.guardian, self.governance]
+        management: address = VaultConfig(self.config).management()
+        governance: address = VaultConfig(self.config).governance()
+        assert msg.sender in [management, governance]
     else:
-        assert msg.sender == self.governance
+        assert msg.sender == VaultConfig(self.config).governance()
     self.emergencyShutdown = active
     log EmergencyShutdown(active)
 
@@ -632,7 +415,9 @@ def setWithdrawalQueue(queue: address[MAXIMUM_STRATEGIES]):
         The array of addresses to use as the new withdrawal queue. This is
         order sensitive.
     """
-    assert msg.sender in [self.management, self.governance]
+    management: address = VaultConfig(self.config).management()
+    governance: address = VaultConfig(self.config).governance()
+    assert msg.sender in [management, governance]
 
     # HACK: Temporary until Vyper adds support for Dynamic arrays
     old_queue: address[MAXIMUM_STRATEGIES] = empty(address[MAXIMUM_STRATEGIES])
@@ -916,35 +701,6 @@ def _issueSharesForAmount(to: address, amount: uint256) -> uint256:
     return shares
 
 @external
-def approveUser(user: address):
-    """
-    @notice
-        Adds user to the allowlist, allowing the user to deposit
-
-
-        This may only be called by governance, management, or approver.
-    @param user
-        The address of the user you with to revoke
-    """
-    assert msg.sender in [self.management, self.governance, self.approver]
-    self.allowlist[user] = True
-
-@external
-def revokeUser(user: address):
-    """
-    @notice
-        Removes user to the allowlist, inhibiting the user from depositing
-
-        This may only be called by governance or management, or approver.
-    @param user
-        The address of the user you with to revoke
-    """
-    assert msg.sender in [self.management, self.governance, self.approver]
-    self.allowlist[user] = False
-
-
-
-@external
 @nonreentrant("withdraw")
 def deposit(_amount: uint256 = MAX_UINT256, recipient: address = msg.sender) -> uint256:
     """
@@ -978,9 +734,9 @@ def deposit(_amount: uint256 = MAX_UINT256, recipient: address = msg.sender) -> 
         caller's address.
     @return The issued Vault shares.
     """
+    assert VaultConfig(self.config).isWhitelisted(msg.sender) == True
     assert not self.emergencyShutdown  # Deposits are locked out
     assert recipient not in [self, ZERO_ADDRESS]
-    assert self.allowlist[recipient] == True
 
     amount: uint256 = _amount
 
@@ -1148,6 +904,7 @@ def withdraw(
         If a loss is specified, up to that amount of shares may be burnt to cover losses on withdrawal.
     @return The quantity of tokens redeemed for `_shares`.
     """
+    assert VaultConfig(self.config).isWhitelisted(msg.sender)
     shares: uint256 = maxShares  # May reduce this number below
 
     # Max Loss is <=100%, revert otherwise
@@ -1293,7 +1050,7 @@ def addStrategy(
 
     # Check calling conditions
     assert not self.emergencyShutdown
-    assert msg.sender == self.governance
+    assert msg.sender == VaultConfig(self.config).governance()
 
     # Check strategy configuration
     assert strategy != ZERO_ADDRESS
@@ -1341,7 +1098,9 @@ def updateStrategyDebtRatio(
     @param strategy The Strategy to update.
     @param debtRatio The quantity of assets `strategy` may now manage.
     """
-    assert msg.sender in [self.management, self.governance]
+    management: address = VaultConfig(self.config).management()
+    governance: address = VaultConfig(self.config).governance()
+    assert msg.sender in [management, governance]
     assert self.strategies[strategy].activation > 0
     self.debtRatio -= self.strategies[strategy].debtRatio
     self.strategies[strategy].debtRatio = debtRatio
@@ -1365,7 +1124,9 @@ def updateStrategyMinDebtPerHarvest(
     @param minDebtPerHarvest
         Lower limit on the increase of debt since last harvest
     """
-    assert msg.sender in [self.management, self.governance]
+    management: address = VaultConfig(self.config).management()
+    governance: address = VaultConfig(self.config).governance()
+    assert msg.sender in [management, governance]
     assert self.strategies[strategy].activation > 0
     assert self.strategies[strategy].maxDebtPerHarvest >= minDebtPerHarvest
     self.strategies[strategy].minDebtPerHarvest = minDebtPerHarvest
@@ -1387,7 +1148,9 @@ def updateStrategyMaxDebtPerHarvest(
     @param maxDebtPerHarvest
         Upper limit on the increase of debt since last harvest
     """
-    assert msg.sender in [self.management, self.governance]
+    management: address = VaultConfig(self.config).management()
+    governance: address = VaultConfig(self.config).governance()
+    assert msg.sender in [management, governance]
     assert self.strategies[strategy].activation > 0
     assert self.strategies[strategy].minDebtPerHarvest <= maxDebtPerHarvest
     self.strategies[strategy].maxDebtPerHarvest = maxDebtPerHarvest
@@ -1408,7 +1171,7 @@ def updateStrategyPerformanceFee(
     @param strategy The Strategy to update.
     @param performanceFee The new fee the strategist will receive.
     """
-    assert msg.sender == self.governance
+    assert msg.sender == VaultConfig(self.config).governance()
     assert performanceFee <= MAX_BPS / 2
     assert self.strategies[strategy].activation > 0
     self.strategies[strategy].performanceFee = performanceFee
@@ -1439,7 +1202,7 @@ def migrateStrategy(oldVersion: address, newVersion: address):
     @param oldVersion The existing Strategy to migrate from.
     @param newVersion The new Strategy to migrate to.
     """
-    assert msg.sender == self.governance
+    assert msg.sender == VaultConfig(self.config).governance()
     assert newVersion != ZERO_ADDRESS
     assert self.strategies[oldVersion].activation > 0
     assert self.strategies[newVersion].activation == 0
@@ -1495,7 +1258,9 @@ def revokeStrategy(strategy: address = msg.sender):
         shutdown.
     @param strategy The Strategy to revoke.
     """
-    assert msg.sender in [strategy, self.governance, self.guardian]
+    guardian: address = VaultConfig(self.config).guardian()
+    governance: address = VaultConfig(self.config).governance()
+    assert msg.sender in [strategy,governance, guardian]
     assert self.strategies[strategy].debtRatio != 0 # dev: already zero
 
     self._revokeStrategy(strategy)
@@ -1513,7 +1278,9 @@ def addStrategyToQueue(strategy: address):
         `setWithdrawalQueue` to change the order.
     @param strategy The Strategy to add.
     """
-    assert msg.sender in [self.management, self.governance]
+    management: address = VaultConfig(self.config).management()
+    governance: address = VaultConfig(self.config).governance()
+    assert msg.sender in [management, governance]
     # Must be a current Strategy
     assert self.strategies[strategy].activation > 0
     # Can't already be in the queue
@@ -1543,7 +1310,9 @@ def removeStrategyFromQueue(strategy: address):
         be possible to withdraw from the Strategy if it's unwinding.
     @param strategy The Strategy to remove.
     """
-    assert msg.sender in [self.management, self.governance]
+    management: address = VaultConfig(self.config).management()
+    governance: address = VaultConfig(self.config).governance()
+    assert msg.sender in [management, governance]
     for idx in range(MAXIMUM_STRATEGIES):
         if self.withdrawalQueue[idx] == strategy:
             self.withdrawalQueue[idx] = ZERO_ADDRESS
@@ -1708,7 +1477,7 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
         (
             (self.strategies[strategy].totalDebt - Strategy(strategy).delegatedAssets())
             * duration 
-            * self.managementFee
+            * VaultConfig(self.config).getManagementFee(self)
         )
         / MAX_BPS
         / SECS_PER_YEAR
@@ -1722,15 +1491,15 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
         / MAX_BPS
     )
     # NOTE: Unlikely to throw unless strategy reports >1e72 harvest profit
-    performance_fee: uint256 = gain * self.performanceFee / MAX_BPS
+    performance_fee: uint256 = gain * VaultConfig(self.config).getPerformanceFee(self) / MAX_BPS
 
-    # NOTE : Partner fee
-    partner_fee: uint256 = (gain - performance_fee) * self.partnerFee / MAX_BPS
+    # NOTE: Partner fee
+    partner_fee: uint256 = (gain - performance_fee) * VaultConfig(self.config).getPartnerFee(self) / MAX_BPS
 
     # NOTE: This must be called prior to taking new collateral,
     #       or the calculation will be wrong!
     # NOTE: This must be done at the same time, to ensure the relative
-    #       ratio of governance_fee : strategist_fee is kept intact
+    #       ratio of governance_fee: strategist_fee is kept intact
     total_fee: uint256 = performance_fee + strategist_fee + management_fee + partner_fee
     # ensure total_fee is not more than gain
     if total_fee > gain:
@@ -1751,15 +1520,15 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
         # NOTE: Governance earns any dust leftover from flooring math above
         # Send partner fee rewards as new shares in this Vault
         if partner_fee > 0:
-            partner_reward : uint256 = (
+            partner_reward: uint256 = (
                 partner_fee
                 * reward
                 /total_fee
             )
-            self._transfer(self, partner, partner_reward)
+            self._transfer(self, VaultConfig(self.config).partnerFeeRecipient(), partner_reward)
         # Note
         if self.balanceOf[self] > 0:
-            self._transfer(self, self.rewards, self.balanceOf[self])
+            self._transfer(self, VaultConfig(self.config).rewards(), self.balanceOf[self])
     return total_fee
 
 
@@ -1898,11 +1667,34 @@ def sweep(token: address, amount: uint256 = MAX_UINT256):
     @param token The token to transfer out of this vault.
     @param amount The quantity or tokenId to transfer out.
     """
-    assert msg.sender == self.governance
+    assert msg.sender == VaultConfig(self.config).governance()
     # Can't be used to steal what this Vault is protecting
     assert token != self.token.address
     value: uint256 = amount
     if value == MAX_UINT256:
         value = ERC20(token).balanceOf(self)
     log Sweep(token, value)
-    self.erc20_safe_transfer(token, self.governance, value)
+    self.erc20_safe_transfer(token, VaultConfig(self.config).governance(), value)
+
+@view
+@external
+def governance() -> address:
+    return VaultConfig(self.config).governance()
+
+@view
+@external
+def management() -> address:
+    return VaultConfig(self.config).management()
+
+@view
+@external
+def guardian() -> address:
+    return  VaultConfig(self.config).guardian()
+@view
+@external
+def rewards() -> address:
+    return VaultConfig(self.config).rewards()
+@view
+@external
+def approver() -> address:
+    return VaultConfig(self.config).approver()
