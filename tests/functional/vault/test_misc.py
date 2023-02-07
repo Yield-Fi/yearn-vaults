@@ -23,6 +23,7 @@ def vault(gov, management, token, Vault):
     vault.initialize(
         token, gov, gov, token.symbol() + " yVault", "yv" + token.symbol(), gov, gov
     )
+    vault.approveUser(gov, {'from': gov})
     vault.setDepositLimit(MAX_UINT256, {"from": gov})
     vault.setManagement(management, {"from": gov})
     yield vault
