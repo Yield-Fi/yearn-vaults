@@ -1792,8 +1792,7 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
                 / total_fee
             )
             self._transfer(self, strategy, strategist_reward)
-            # NOTE: Strategy distributes rewards at the end of harvest()
-        # NOTE: Governance earns any dust leftover from flooring math above
+
         # Send partner fee rewards as new shares in this Vault
         if partner_fee > 0:
             partner_reward : uint256 = (
@@ -1802,10 +1801,11 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
                 /total_fee
             )
             self._transfer(self, self.partner, partner_reward)
-        # Note
+
+        # NOTE: Governance earns any dust leftover from flooring math above
         if self.balanceOf[self] > 0:
             self._transfer(self, self.rewards, self.balanceOf[self])
-    log FeeReport(management_fee, performance_fee, strategist_fee, partner_fee,duration)
+    log FeeReport(management_fee, performance_fee, strategist_fee, partner_fee, duration)
     return total_fee
 
 

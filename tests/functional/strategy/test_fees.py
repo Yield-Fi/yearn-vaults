@@ -7,6 +7,7 @@ FEE_MAX = 10_000
 def test_performance_fees(gov, vault, token, TestStrategy, rewards, strategist, chain):
     vault.setManagementFee(0, {"from": gov})
     vault.setPerformanceFee(450, {"from": gov})
+    vault.setPartnerFee(0, {"from": gov})
 
     strategy = strategist.deploy(TestStrategy, vault)
     vault.addStrategy(strategy, 2_000, 1000, 1000, 50, {"from": gov})
@@ -21,10 +22,30 @@ def test_performance_fees(gov, vault, token, TestStrategy, rewards, strategist, 
     assert vault.balanceOf(rewards) == 0.045 * 10 ** token.decimals()
     assert vault.balanceOf(strategy) == 0.005 * 10 ** token.decimals()
 
-
-def test_zero_fees(gov, vault, token, TestStrategy, rewards, strategist, chain):
+def test_partner_fees(gov, vault, token, TestStrategy, rewards, partner, strategist, chain):
     vault.setManagementFee(0, {"from": gov})
     vault.setPerformanceFee(0, {"from": gov})
+    vault.setPartnerFee(1000, {"from": gov})
+
+    strategy = strategist.deploy(TestStrategy, vault)
+    vault.addStrategy(strategy, 2_000, 1000, 1000, 0, {"from": gov})
+
+    assert vault.balanceOf(rewards) == 0
+    assert vault.balanceOf(strategy) == 0
+
+    token.transfer(strategy, 10 ** token.decimals(), {"from": gov})
+    chain.sleep(1)
+    strategy.harvest({"from": strategist})
+
+    assert vault.balanceOf(partner) == 0.10 * 10 ** token.decimals()
+    assert vault.balanceOf(rewards) == 0
+    assert vault.balanceOf(strategy) == 0
+
+
+def test_zero_fees(gov, vault, token, TestStrategy, rewards, partner, strategist, chain):
+    vault.setManagementFee(0, {"from": gov})
+    vault.setPerformanceFee(0, {"from": gov})
+    vault.setPartnerFee(0, {"from": gov})
 
     strategy = strategist.deploy(TestStrategy, vault)
     vault.addStrategy(strategy, 2_000, 1000, 1000, 0, {"from": gov})
@@ -41,6 +62,7 @@ def test_zero_fees(gov, vault, token, TestStrategy, rewards, strategist, chain):
     assert vault.strategies(strategy).dict()["performanceFee"] == 0
     assert vault.balanceOf(rewards) == 0
     assert vault.balanceOf(strategy) == 0
+    assert vault.balanceOf(partner) == 0
 
 
 def test_max_fees(gov, vault, token, TestStrategy, rewards, strategist):
