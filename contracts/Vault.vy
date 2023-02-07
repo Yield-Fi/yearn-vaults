@@ -1,4 +1,4 @@
-# @version 0.2.12
+# @version 0.3.3
 """
 @title Yearn Token Vault
 @license GNU AGPLv3
@@ -56,6 +56,7 @@ interface Strategy:
     def estimatedTotalAssets() -> uint256: view
     def withdraw(_amount: uint256) -> uint256: nonpayable
     def migrate(_newStrategy: address): nonpayable
+    def emergencyExit() -> bool: view
 
 interface VaultConfig:
     def MAX_BPS() -> uint256: view
@@ -206,6 +207,7 @@ emergencyShutdown: public(bool)
 depositLimit: public(uint256)  # Limit for totalAssets the Vault can hold
 debtRatio: public(uint256)  # Debt ratio for the Vault across all strategies (in BPS, <= 10k)
 totalDebt: public(uint256)  # Amount of tokens that all strategies have borrowed
+totalIdle: public(uint256)  # Amount of tokens that are in the vault
 lastReport: public(uint256)  # block.timestamp of last report
 activation: public(uint256)  # block.timestamp of contract deployment
 lockedProfit: public(uint256) # how much profit is locked and cant be withdrawn
@@ -220,7 +222,6 @@ MAX_BPS: constant(uint256) = 10_000  # 100%, or 10k basis points
 SECS_PER_YEAR: constant(uint256) = 31_556_952  # 365.2425 days
 # `nonces` track `permit` approvals with signature.
 nonces: public(HashMap[address, uint256])
-DOMAIN_SEPARATOR: public(bytes32)
 DOMAIN_TYPE_HASH: constant(bytes32) = keccak256('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)')
 PERMIT_TYPE_HASH: constant(bytes32) = keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)")
 
@@ -277,16 +278,6 @@ def initialize(
     self.lastReport = block.timestamp
     self.activation = block.timestamp
     self.lockedProfitDegradation = convert(DEGRADATION_COEFFICIENT * 46 / 10 ** 6 , uint256) # 6 hours in blocks
-    # EIP-712
-    self.DOMAIN_SEPARATOR = keccak256(
-        concat(
-            DOMAIN_TYPE_HASH,
-            keccak256(convert("Yearn Vault", Bytes[11])),
-            keccak256(convert(API_VERSION, Bytes[28])),
-            convert(chain.id, bytes32),
-            convert(self, bytes32)
-        )
-    )
 
 @pure
 @external
@@ -303,9 +294,26 @@ def apiVersion() -> String[28]:
     """
     return API_VERSION
 
+@view
+@internal
+def domain_separator() -> bytes32:
+    return keccak256(
+        concat(
+            DOMAIN_TYPE_HASH,
+            keccak256(convert("Yearn Vault", Bytes[11])),
+            keccak256(convert(API_VERSION, Bytes[28])),
+            convert(chain.id, bytes32),
+            convert(self, bytes32)
+        )
+    )
+
+@view
+@external
+def DOMAIN_SEPARATOR() -> bytes32:
+    return self.domain_separator()
 
 @external
-def setName(name: String[42]):
+def setName(name: String[64]):
     """
     @notice
         Used to change the value of `name`.
@@ -318,7 +326,7 @@ def setName(name: String[42]):
 
 
 @external
-def setSymbol(symbol: String[20]):
+def setSymbol(symbol: String[32]):
     """
     @notice
         Used to change the value of `symbol`.
@@ -611,7 +619,7 @@ def permit(owner: address, spender: address, amount: uint256, expiry: uint256, s
     digest: bytes32 = keccak256(
         concat(
             b'\x19\x01',
-            self.DOMAIN_SEPARATOR,
+            self.domain_separator(),
             keccak256(
                 concat(
                     PERMIT_TYPE_HASH,
@@ -639,7 +647,7 @@ def permit(owner: address, spender: address, amount: uint256, expiry: uint256, s
 @internal
 def _totalAssets() -> uint256:
     # See note on `totalAssets()`.
-    return self.token.balanceOf(self) + self.totalDebt
+    return self.totalIdle + self.totalDebt
 
 
 @view
@@ -761,7 +769,7 @@ def deposit(_amount: uint256 = MAX_UINT256, recipient: address = msg.sender) -> 
 
     # Tokens are transferred from msg.sender (may be different from _recipient)
     self.erc20_safe_transferFrom(self.token.address, msg.sender, self, amount)
-    
+    self.totalIdle += amount
     log Deposit(recipient, shares, amount)
 
     return shares  # Just in case someone wants them
@@ -820,7 +828,7 @@ def maxAvailableShares() -> uint256:
         realized losses incurred during withdrawal.
     @return The total quantity of shares this Vault can provide.
     """
-    shares: uint256 = self._sharesForAmount(self.token.balanceOf(self))
+    shares: uint256 = self._sharesForAmount(self.totalIdle)
 
     for strategy in self.withdrawalQueue:
         if strategy == ZERO_ADDRESS:
@@ -922,8 +930,9 @@ def withdraw(
 
     # See @dev note, above.
     value: uint256 = self._shareValue(shares)
-
-    if value > self.token.balanceOf(self):
+    
+    vault_balance: uint256 = self.totalIdle
+    if value > vault_balance:
         totalLoss: uint256 = 0
         # We need to go get some from our strategies in the withdrawal queue
         # NOTE: This performs forced withdrawals from each Strategy. During
@@ -937,7 +946,6 @@ def withdraw(
             if strategy == ZERO_ADDRESS:
                 break  # We've exhausted the queue
 
-            vault_balance: uint256 = self.token.balanceOf(self)
             if value <= vault_balance:
                 break  # We're done withdrawing
 
@@ -952,8 +960,10 @@ def withdraw(
                 continue  # Nothing to withdraw from this Strategy, try the next one
 
             # Force withdraw amount from each Strategy in the order set by governance
+            preBalance: uint256 = self.token.balanceOf(self)
             loss: uint256 = Strategy(strategy).withdraw(amountNeeded)
-            withdrawn: uint256 = self.token.balanceOf(self) - vault_balance
+            withdrawn: uint256 = self.token.balanceOf(self) - preBalance
+            vault_balance += withdrawn
 
             # NOTE: Withdrawer incurs any losses from liquidation
             if loss > 0:
@@ -965,11 +975,11 @@ def withdraw(
             # NOTE: This doesn't add to returns as it's not earned by "normal means"
             self.strategies[strategy].totalDebt -= withdrawn
             self.totalDebt -= withdrawn
-
+            log WithdrawFromStrategy(strategy, self.strategies[strategy].totalDebt, loss)
+        self.totalIdle = vault_balance
         # NOTE: We have withdrawn everything possible out of the withdrawal queue
         #       but we still don't have enough to fully pay them back, so adjust
         #       to the total amount we've freed up through forced withdrawals
-        vault_balance: uint256 = self.token.balanceOf(self)
         if value > vault_balance:
             value = vault_balance
             # NOTE: Burn # of shares that corresponds to what Vault has on-hand,
@@ -984,7 +994,8 @@ def withdraw(
     self.totalSupply -= shares
     self.balanceOf[msg.sender] -= shares
     log Transfer(msg.sender, ZERO_ADDRESS, shares)
-
+        
+    self.totalIdle -= value
     # Withdraw remaining balance to _recipient (may be different to msg.sender) (minus fee)
     self.erc20_safe_transfer(self.token.address, recipient, value)
     log Withdraw(recipient, shares, value)
@@ -1102,6 +1113,7 @@ def updateStrategyDebtRatio(
     governance: address = VaultConfig(self.config).governance()
     assert msg.sender in [management, governance]
     assert self.strategies[strategy].activation > 0
+    assert Strategy(strategy).emergencyExit() == False # dev: strategy in emergency
     self.debtRatio -= self.strategies[strategy].debtRatio
     self.strategies[strategy].debtRatio = debtRatio
     self.debtRatio += debtRatio
@@ -1380,10 +1392,10 @@ def _creditAvailable(strategy: address) -> uint256:
 
     # Adjust by the global debt limit left
     available = min(available, vault_debtLimit - vault_totalDebt)
-
+    
     # Can only borrow up to what the contract has in reserve
     # NOTE: Running near 100% is discouraged
-    available = min(available, self.token.balanceOf(self))
+    available = min(available, self.totalIdle)
 
     # Adjust by min and max borrow limits (per harvest)
     # NOTE: min increase can be used to ensure that if a strategy has a minimum
@@ -1466,6 +1478,8 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
     # Issue new shares to cover fees
     # NOTE: In effect, this reduces overall share price by the combined fee
     # NOTE: may throw if Vault.totalAssets() > 1e64, or not called for more than a year
+    if self.strategies[strategy].activation == block.timestamp:
+        return 0  # NOTE: Just added, no fees to assess
     duration: uint256 = block.timestamp - self.strategies[strategy].lastReport
     assert duration != 0 # can't assessFees twice within the same block
 
@@ -1516,8 +1530,7 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
                 / total_fee
             )
             self._transfer(self, strategy, strategist_reward)
-            # NOTE: Strategy distributes rewards at the end of harvest()
-        # NOTE: Governance earns any dust leftover from flooring math above
+
         # Send partner fee rewards as new shares in this Vault
         if partner_fee > 0:
             partner_reward: uint256 = (
@@ -1527,8 +1540,13 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
             )
             self._transfer(self, VaultConfig(self.config).partnerFeeRecipient(), partner_reward)
         # Note
+            self._transfer(self, self.partner, partner_reward)
+
+        # NOTE: Governance earns any dust leftover from flooring math above
         if self.balanceOf[self] > 0:
             self._transfer(self, VaultConfig(self.config).rewards(), self.balanceOf[self])
+            self._transfer(self, self.rewards, self.balanceOf[self])
+    log FeeReport(management_fee, performance_fee, strategist_fee, partner_fee, duration)
     return total_fee
 
 
@@ -1612,10 +1630,13 @@ def report(gain: uint256, loss: uint256, _debtPayment: uint256) -> uint256:
     #       the Vault based on the Strategy's debt limit (as well as the Vault's).
     totalAvail: uint256 = gain + debtPayment
     if totalAvail < credit:  # credit surplus, give to Strategy
+        self.totalIdle -= credit - totalAvail
         self.erc20_safe_transfer(self.token.address, msg.sender, credit - totalAvail)
     elif totalAvail > credit:  # credit deficit, take from Strategy
+        self.totalIdle += totalAvail - credit
         self.erc20_safe_transferFrom(self.token.address, msg.sender, self, totalAvail - credit)
     # else, don't do anything because it is balanced
+
 
     # Profit is locked and gradually released per block
     # NOTE: compute current locked profit and replace with sum of current and new
@@ -1669,10 +1690,11 @@ def sweep(token: address, amount: uint256 = MAX_UINT256):
     """
     assert msg.sender == VaultConfig(self.config).governance()
     # Can't be used to steal what this Vault is protecting
-    assert token != self.token.address
     value: uint256 = amount
     if value == MAX_UINT256:
         value = ERC20(token).balanceOf(self)
+    if token == self.token.address:
+        value = self.token.balanceOf(self) - self.totalIdle
     log Sweep(token, value)
     self.erc20_safe_transfer(token, VaultConfig(self.config).governance(), value)
 
