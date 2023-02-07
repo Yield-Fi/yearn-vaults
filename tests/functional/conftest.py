@@ -22,6 +22,10 @@ def guardian(accounts):
 def management(accounts):
     yield accounts[3]
 
+@pytest.fixture
+def partner(accounts):
+    yield accounts[4]
+
 
 @pytest.fixture
 def create_token(gov):
@@ -40,7 +44,7 @@ def token(create_token, request):
 
 
 @pytest.fixture
-def create_vault(gov, guardian, rewards, create_token, patch_vault_version):
+def create_vault(gov, guardian, rewards, partner, create_token, patch_vault_version):
     def create_vault(token=None, version=None, governance=gov):
         if token is None:
             token = create_token()
@@ -48,16 +52,18 @@ def create_vault(gov, guardian, rewards, create_token, patch_vault_version):
         vault.initialize(token, governance, rewards, "", "", guardian, governance)
         vault.setDepositLimit(2 ** 256 - 1, {"from": governance})
         vault.approveUser(governance, {'from': governance})
+        vault.setPartner(partner, {'from': governance})
         return vault
 
     yield create_vault
 
 
 @pytest.fixture
-def vault(gov, management, token, create_vault):
+def vault(gov, management, token, partner, create_vault):
     vault = create_vault(token=token, governance=gov)
     vault.setManagement(management, {"from": gov})
     vault.approveUser(gov, {'from': gov})
+    vault.setPartner(partner, {'from': gov})
 
     # Make it so vault has some AUM to start
     token.approve(vault, token.balanceOf(gov) // 2, {"from": gov})
