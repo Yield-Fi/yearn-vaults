@@ -17,9 +17,11 @@ contract VaultConfig {
 
     mapping (address => bool) isWhitelisted;
 
-    mapping (address => uint256) partnerFees;//TODO replace these with vaults controlled by this VaultConfig
+    mapping (address => uint256) partnerFees;
     mapping (address => uint256) managementFees;
     mapping (address => uint256) performanceFees;
+
+    address[] public vaults;
 
     uint256 public constant MAX_BPS = 10000;
 
@@ -142,20 +144,21 @@ contract VaultConfig {
 
     function cancelWhitelist (address _toCancel) external onlyApprover {
         require(_toCancel != address(0), "VaultConfig:invalid address to cancel whitelisting");
+        require(!isWhitelisted[_toCancel], "VaultConfig:address not whitelisted before");
         isWhitelisted[_toCancel] = false;
     }
 
     function bulkWhitelist (address [] calldata _toWhitelists) external onlyApprover {
         for (uint256 i = 0; i < _toWhitelists.length ;i++) {
             require(_toWhitelists[i] != address(0), "!Zero");
-            isWhitelisted[tmp] = true;
+            isWhitelisted[_toWhitelists[i]] = true;
         }
     }
 
     function bulkCancelWhitelist (address [] calldata _toCancel) external onlyApprover {
-        for (uint256 i = 0; i < _toWhitelists.length ;i++) {
-            require(_toWhitelists[i] != address(0), "!Zero");
-            isWhitelisted[tmp] = false;
+        for (uint256 i = 0; i < _toCancel.length ;i++) {
+            require(_toCancel[i] != address(0), "!Zero");
+            isWhitelisted[_toCancel[i]] = false;
         }   
     }
 

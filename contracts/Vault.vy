@@ -187,6 +187,19 @@ event StrategyAddedToQueue:
 event UpdateHealthCheck:
     healthCheck: indexed(address)
 
+event WithdrawFromStrategy:
+    strategy: indexed(address)
+    totalDebt: uint256
+    loss: uint256
+
+event FeeReport:
+    management_fee: uint256
+    performance_fee: uint256
+    strategist_fee: uint256
+    partner_fee: uint256
+    duration: uint256
+
+
 # NOTE: Track the total for overhead targeting purposes
 strategies: public(HashMap[address, StrategyParams])
 MAXIMUM_STRATEGIES: constant(uint256) = 20
@@ -1538,14 +1551,11 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
                 * reward
                 /total_fee
             )
-            self._transfer(self, VaultConfig(self.config).partnerFeeRecipient(), partner_reward)
-        # Note
-            self._transfer(self, self.partner, partner_reward)
+            self._transfer(self, VaultConfig(self.config).partner(), partner_reward)
 
         # NOTE: Governance earns any dust leftover from flooring math above
         if self.balanceOf[self] > 0:
             self._transfer(self, VaultConfig(self.config).rewards(), self.balanceOf[self])
-            self._transfer(self, self.rewards, self.balanceOf[self])
     log FeeReport(management_fee, performance_fee, strategist_fee, partner_fee, duration)
     return total_fee
 
