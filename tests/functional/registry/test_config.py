@@ -31,8 +31,8 @@ def test_registry_setGovernance(gov, registry, rando):
         registry.acceptGovernance({"from": gov})
 
 
-def test_banksy(gov, registry, create_vault, rando):
-    vault = create_vault()
+def test_banksy(gov, registry, vault, rando):
+    print(vault)
     registry.newRelease(vault, {"from": gov})
     assert registry.tags(vault) == ""
 

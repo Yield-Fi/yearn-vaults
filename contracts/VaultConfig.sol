@@ -15,17 +15,17 @@ contract VaultConfig {
     address public approver; //address that controls this partner's vaults whitelists
     address public rewards;
 
-    mapping (address => bool) isWhitelisted;
+    mapping (address => bool) public isWhitelisted;
 
-    mapping (address => uint256) partnerFees;
-    mapping (address => uint256) managementFees;
-    mapping (address => uint256) performanceFees;
+    mapping (address => uint256) public partnerFees;
+    mapping (address => uint256) public managementFees;
+    mapping (address => uint256) public performanceFees;
 
     address[] public vaults;
 
     uint256 public constant MAX_BPS = 10000;
 
-    event Configured (
+    event Initialized (
         address indexed partner, address indexed management, address guardian, address rewards, address approver
         );
     event PerformanceFeeUpdated(address indexed vault, uint256 newFee);
@@ -59,13 +59,13 @@ contract VaultConfig {
         governance = msg.sender;
     }
 
-    function config (address _partner, address _management, address _guardian, address _rewards, address _approver) external onlyGov {
+    function initialize (address _partner, address _management, address _guardian, address _rewards, address _approver) external onlyGov {
         partner = _partner;
         management = _management;
         guardian = _guardian;
         rewards = _rewards;
         approver = _approver;
-        emit Configured(_partner, _management, _guardian, _rewards, _approver);
+        emit Initialized(_partner, _management, _guardian, _rewards, _approver);
     }
 
     function updatePartner (address _partner ) external onlyGov {//FIXME onlyGov, onlyPartner, onlyApprover?
@@ -114,7 +114,7 @@ contract VaultConfig {
         emit RewardRecipientUpdated(_newRewards);
     }
 
-    function proposeNewGoverner (address newGov) external onlyGov {
+    function setGovernance (address newGov) external onlyGov {
         pendingGovernance = newGov;
     }
 

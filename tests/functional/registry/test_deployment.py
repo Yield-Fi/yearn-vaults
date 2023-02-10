@@ -12,6 +12,7 @@ def test_deployment_management(
     create_token,
     create_vault,
     rando,
+    vault_config
 ):
     v1_token = create_token()
     # No deployments yet for token
@@ -42,7 +43,7 @@ def test_deployment_management(
 
     # Can't deploy the same vault api version twice, proxy or not
     with brownie.reverts():
-        registry.newVault(v1_token, guardian, rewards, "", "", {"from": gov})
+        registry.newVault(v1_token, "", "", vault_config, {"from": gov})
 
     # New release overrides previous release
     v2_vault = create_vault(version="2.0.0")  # Uses different token
@@ -54,7 +55,7 @@ def test_deployment_management(
     assert registry.numTokens() == 1
     proxy_vault = Vault.at(
         registry.newVault(
-            v1_token, guardian, rewards, "", "", {"from": gov}
+            v1_token, "", "", vault_config, {"from": gov}
         ).return_value
     )
     assert proxy_vault.apiVersion() == v2_vault.apiVersion() == "2.0.0"
@@ -69,7 +70,7 @@ def test_deployment_management(
     v2_token = create_token()
     proxy_vault = Vault.at(
         registry.newVault(
-            v2_token, guardian, rewards, "", "", 1, {"from": gov}
+            v2_token, "", "", vault_config, 1, {"from": gov}
         ).return_value
     )
     assert proxy_vault.apiVersion() == v1_vault.apiVersion() == "1.0.0"
@@ -86,23 +87,27 @@ def test_deployment_management(
 
     # Not just anyone can create a new endorsed Vault, only governance can!
     with brownie.reverts():
-        registry.newVault(create_token(), guardian, rewards, "", "", {"from": rando})
+        registry.newVault(create_token(), "", "", vault_config, {"from": rando})
 
 
 def test_experimental_deployments(
-    gov, rando, registry, Vault, create_token, create_vault
+    gov, rando, registry, Vault, create_token, create_vault, vault_config, VaultConfig
 ):
     v1_vault = create_vault(version="1.0.0")
     registry.newRelease(v1_vault, {"from": gov})
 
+    vault_config_rando = VaultConfig.deploy({"from": rando})
+    vault_config_rando.initialize(rando, rando, rando, rando, rando, {"from": rando})
+    vault_config_rando.whitelist(gov, {'from': rando})
+
     # Anyone can make an experiment
     token = create_token()
-    registry.newExperimentalVault(token, rando, rando, rando, "", "", {"from": rando})
+    registry.newExperimentalVault(token, "", "", vault_config_rando, {"from": rando})
 
     # You can make as many experiments as you want with same api version
     experimental_vault = Vault.at(
         registry.newExperimentalVault(
-            token, rando, rando, rando, "", "", {"from": rando}
+            token, "", "", vault_config_rando, {"from": rando}
         ).return_value
     )
 
@@ -114,8 +119,8 @@ def test_experimental_deployments(
     with brownie.reverts():
         registry.endorseVault(experimental_vault, {"from": gov})
 
-    experimental_vault.setGovernance(gov, {"from": rando})
-    experimental_vault.acceptGovernance({"from": gov})
+    vault_config_rando.setGovernance(gov, {"from": rando})
+    vault_config_rando.acceptGovernance({"from": gov})
 
     # New experimental (unendorsed) vaults should not register tokens
     assert registry.tokens(0) == ZERO_ADDRESS
@@ -134,7 +139,7 @@ def test_experimental_deployments(
     # You can't endorse a vault if it would overwrite a current deployment
     experimental_vault = Vault.at(
         registry.newExperimentalVault(
-            token, gov, gov, gov, "", "", {"from": rando}
+            token, "", "", vault_config,  {"from": rando}
         ).return_value
     )
     with brownie.reverts():
@@ -146,7 +151,7 @@ def test_experimental_deployments(
 
     experimental_vault = Vault.at(
         registry.newExperimentalVault(
-            token, gov, gov, gov, "", "", {"from": rando}
+            token, "", "", vault_config,  {"from": rando}
         ).return_value
     )
     registry.endorseVault(experimental_vault, {"from": gov})
@@ -156,7 +161,7 @@ def test_experimental_deployments(
     token = create_token()
     experimental_vault = Vault.at(
         registry.newExperimentalVault(
-            token, gov, gov, gov, "", "", 1, {"from": rando}
+            token, "", "", vault_config, 1, {"from": rando}
         ).return_value
     )
     registry.endorseVault(experimental_vault, 1, {"from": gov})
