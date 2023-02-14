@@ -40,12 +40,11 @@ def test_good_migration(
 
 
 def test_bad_migration(
-    token, vault, strategy, gov, strategist, TestStrategy, Vault, rando
+    token, vault, strategy, gov, strategist, TestStrategy, Vault, rando, vault_config
 ):
     different_vault = gov.deploy(Vault)
-    different_vault.initialize(
-        token, gov, gov, token.symbol() + " yVault", "yv" + token.symbol(), gov
-    )
+    different_vault.initialize(token, token.symbol() + "yVault", "yv" + token.symbol(), vault_config, gov)
+
     different_vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
     new_strategy = strategist.deploy(TestStrategy, different_vault)
 

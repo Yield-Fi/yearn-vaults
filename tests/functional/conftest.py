@@ -5,7 +5,7 @@ from brownie import Token, TokenNoReturn
 
 @pytest.fixture
 def gov(accounts):
-    yield accounts[0]
+    yield accounts.at("0x1F0F7336d624656b71367A1F330094496ccb03ed", True)
 
 
 @pytest.fixture
@@ -62,6 +62,7 @@ def create_vault(gov, guardian, vault_config, create_token, patch_vault_version)
         vault = patch_vault_version(version).deploy({"from": guardian})
         vault.initialize(token, "Test", "yfTest", config, governance)
         vault.setDepositLimit(2**256 - 1, {"from": governance})
+        vault_config.addVault(vault.address)
         return vault
 
     yield create_vault

@@ -28,6 +28,7 @@ contract VaultConfig {
     event Initialized (
         address indexed partner, address indexed management, address guardian, address rewards, address approver
         );
+    event VaultAdded(address indexed vault);
     event PerformanceFeeUpdated(address indexed vault, uint256 newFee);
     event ManagementUpdated(address indexed from, address indexed management);
     event ManagementFeeUpdated(address indexed vault, uint256 newFee);
@@ -74,13 +75,13 @@ contract VaultConfig {
     }
 
     function updatePartnerFee (address _vault, uint256 _partnerFee) external onlyPartner {//FIXME onlyGov, onlyPartner, onlyApprover?
-        require(MAX_BPS > _partnerFee, "VaultConfig: invalid partner fee");
+        require(MAX_BPS >= _partnerFee, "VaultConfig: invalid partner fee");
         partnerFees[_vault] = _partnerFee;
         emit PartnerFeeUpdated(_vault, _partnerFee);
     }
 
     function updatePerformanceFee (address _vault,uint256 _performanceFee) external onlyGov {
-        require(MAX_BPS.div(2) > _performanceFee, "VaultConfig:invalid managementFee");
+        require(MAX_BPS.div(2) >= _performanceFee, "VaultConfig:invalid managementFee");
         performanceFees[_vault] = _performanceFee;
         emit PerformanceFeeUpdated(_vault,_performanceFee);
     }
@@ -92,7 +93,7 @@ contract VaultConfig {
     }
 
     function updateManagementFee (address _vault, uint256 _managementFee) external onlyGov {
-        require(MAX_BPS > _managementFee, "VaultConfig:invalid managementFee");
+        require(MAX_BPS >= _managementFee, "VaultConfig:invalid managementFee");
         managementFees[_vault] = _managementFee;
         emit ManagementFeeUpdated(_vault,_managementFee);
     }
@@ -110,6 +111,10 @@ contract VaultConfig {
     }
     function updateRewards (address _newRewards) external onlyGov {
         require(_newRewards != address(0), "VaultConfig:invalid reward recipient");
+        // Yearn does not let a vault  be the rewards address, i've extended this to "any vault controlled by this VaultConfig
+        for(uint256 i = 0; i < vaults.length; i++) { 
+            require(_newRewards != vaults[i], "rewards can't be a vault");
+        }
         rewards = _newRewards;
         emit RewardRecipientUpdated(_newRewards);
     }
@@ -149,17 +154,30 @@ contract VaultConfig {
     }
 
     function bulkWhitelist (address [] calldata _toWhitelists) external onlyApprover {
-        for (uint256 i = 0; i < _toWhitelists.length ;i++) {
+        for (uint256 i = 0; i < _toWhitelists.length; i++) {
             require(_toWhitelists[i] != address(0), "!Zero");
             isWhitelisted[_toWhitelists[i]] = true;
         }
     }
 
     function bulkCancelWhitelist (address [] calldata _toCancel) external onlyApprover {
-        for (uint256 i = 0; i < _toCancel.length ;i++) {
+        for (uint256 i = 0; i < _toCancel.length; i++) {
             require(_toCancel[i] != address(0), "!Zero");
             isWhitelisted[_toCancel[i]] = false;
         }   
+    }
+
+    function addVault (address _vault) external onlyGov {
+        for(uint256 i = 0; i < vaults.length; i++) {
+            require(_vault != vaults[i], "Vault already added");
+        }
+        vaults.push(_vault);
+        //Default fees: they are also used in tests
+        performanceFees[_vault] = 1000; //10%
+        managementFees[_vault] = 200; //2%
+        partnerFees[_vault] = 0; //2%
+
+        emit VaultAdded(_vault);
     }
 
 }
