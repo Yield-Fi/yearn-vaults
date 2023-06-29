@@ -2,8 +2,9 @@
 pragma solidity >=0.8.0;
 
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelinupgradeable/contracts/proxy/utils/Initializable.sol";
 
-contract VaultConfig {
+contract VaultConfig is Initializable {
     using SafeMath for uint256;
 
     address public governance = 0x1F0F7336d624656b71367A1F330094496ccb03ed;
@@ -59,7 +60,7 @@ contract VaultConfig {
         governance = msg.sender;
     }
 
-    function initialize (address _partner, address _management, address _guardian, address _rewards, address _approver) external onlyGov {
+    function initialize (address _partner, address _management, address _guardian, address _rewards, address _approver) public initializer {
         partner = _partner;
         management = _management;
         guardian = _guardian;

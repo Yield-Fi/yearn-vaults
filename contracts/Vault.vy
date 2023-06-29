@@ -473,12 +473,6 @@ def setWithdrawalQueue(queue: address[MAXIMUM_STRATEGIES]):
     log UpdateWithdrawalQueue(queue)
 
 
-@external
-def setConfig(config: address):
-    assert msg.sender == VaultConfig(self.config).governance()
-    self.config = config
-
-
 @internal
 def erc20_safe_transfer(token: address, receiver: address, amount: uint256):
     # Used only to send tokens that are not the type managed by this Vault.
