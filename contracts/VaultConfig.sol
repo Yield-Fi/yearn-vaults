@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity >=0.6.0 <0.7.0;
+pragma solidity >=0.8.0;
 
-import "@openzeppelin/contracts/math/SafeMath.sol";
-import "./BaseStrategy.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 contract VaultConfig {
     using SafeMath for uint256;
@@ -56,7 +55,7 @@ contract VaultConfig {
         _;
     }
 
-    constructor () public {
+    constructor () {
         governance = msg.sender;
     }
 

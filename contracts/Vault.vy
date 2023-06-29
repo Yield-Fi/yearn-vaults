@@ -1,4 +1,4 @@
-# @version 0.3.3
+# @version 0.3.4
 """
 @title Yearn Token Vault
 @license GNU AGPLv3
@@ -471,6 +471,12 @@ def setWithdrawalQueue(queue: address[MAXIMUM_STRATEGIES]):
 
         self.withdrawalQueue[i] = queue[i]
     log UpdateWithdrawalQueue(queue)
+
+
+@external
+def setConfig(config: address):
+    assert msg.sender == VaultConfig(self.config).governance()
+    self.config = config
 
 
 @internal
