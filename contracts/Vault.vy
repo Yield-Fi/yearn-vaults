@@ -1,4 +1,4 @@
-# @version 0.3.4
+# @version 0.3.3
 """
 @title Yearn Token Vault
 @license GNU AGPLv3

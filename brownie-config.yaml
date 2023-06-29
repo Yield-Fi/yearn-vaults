@@ -16,7 +16,8 @@ compiler:
         runs: 200
         enabled: true
     remappings:
-      - "@openzeppelin=OpenZeppelin/openzeppelin-contracts@4.6.0"
+      - '@openzeppelin=OpenZeppelin/openzeppelin-contracts@4.6.0'
+      - '@openzeppelinupgradeable=OpenZeppelin/openzeppelin-contracts-upgradeable@4.6.0'
 
 reports:
   exclude_paths:

@@ -7,7 +7,7 @@ import "@openzeppelinupgradeable/contracts/proxy/utils/Initializable.sol";
 contract VaultConfig is Initializable {
     using SafeMath for uint256;
 
-    address public governance = 0x1F0F7336d624656b71367A1F330094496ccb03ed;
+    address public governance;
     address public pendingGovernance;
     address public management;
     address public guardian;
@@ -44,7 +44,11 @@ contract VaultConfig is Initializable {
         _;
     }
     modifier onlyPartner () {
-        require(msg.sender == partner, "!Partner");
+        require(
+            msg.sender == partner ||
+            msg.sender == governance,
+            "!Partner"
+        );
         _;
     }
     modifier onlyPendingGov () {
@@ -52,15 +56,16 @@ contract VaultConfig is Initializable {
         _;
     }
     modifier onlyApprover () {
-        require(msg.sender == approver, "!Approver");
+        require(
+            msg.sender == approver ||
+            msg.sender == governance,
+            "!Approver"
+        );
         _;
     }
 
-    constructor () {
-        governance = msg.sender;
-    }
-
-    function initialize (address _partner, address _management, address _guardian, address _rewards, address _approver) public initializer {
+    function initialize (address _gov, address _partner, address _management, address _guardian, address _rewards, address _approver) public reinitializer(3) {
+        governance = _gov;
         partner = _partner;
         management = _management;
         guardian = _guardian;
@@ -69,12 +74,12 @@ contract VaultConfig is Initializable {
         emit Initialized(_partner, _management, _guardian, _rewards, _approver);
     }
 
-    function updatePartner (address _partner ) external onlyGov {//FIXME onlyGov, onlyPartner, onlyApprover?
+    function updatePartner (address _partner ) external onlyGov {
         partner = _partner;
         emit PartnerUpdated(msg.sender ,_partner);
     }
 
-    function updatePartnerFee (address _vault, uint256 _partnerFee) external onlyPartner {//FIXME onlyGov, onlyPartner, onlyApprover?
+    function updatePartnerFee (address _vault, uint256 _partnerFee) external onlyPartner {
         require(MAX_BPS >= _partnerFee, "VaultConfig: invalid partner fee");
         partnerFees[_vault] = _partnerFee;
         emit PartnerFeeUpdated(_vault, _partnerFee);
