@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.6.12;
+pragma solidity >=0.8.0;
 
-import "@openzeppelin/contracts/math/SafeMath.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract Token is ERC20 {
     mapping(address => bool) public _blocked;
+    uint8 decimals_;
 
     constructor(uint8 _decimals) public ERC20("yearn.finance test token", "TEST") {
-        _setupDecimals(_decimals);
+        decimals_ =_decimals;
         _mint(msg.sender, 30000 * 10**uint256(_decimals));
+    }
+
+    function decimals() public view override returns (uint8) {
+        return decimals_;
     }
 
     function _setBlocked(address user, bool value) public virtual {
@@ -42,7 +47,7 @@ contract TokenNoReturn {
 
     mapping(address => bool) public _blocked;
 
-    constructor(uint8 _decimals) public {
+    constructor(uint8 _decimals) {
         name = "yearn.finance test token";
         symbol = "TEST";
         decimals = _decimals;
@@ -80,7 +85,7 @@ contract TokenNoReturn {
 }
 
 contract TokenFalseReturn is Token {
-    constructor(uint8 _decimals) public Token(_decimals) {}
+    constructor(uint8 _decimals) Token(_decimals) {}
 
     function transfer(address receiver, uint256 amount) public virtual override returns (bool) {
         return false;

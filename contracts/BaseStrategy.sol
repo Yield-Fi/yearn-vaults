@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity >=0.6.0 <0.7.0;
+pragma solidity >=0.8.0;
 pragma experimental ABIEncoderV2;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
-import "@openzeppelin/contracts/math/SafeMath.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 struct StrategyParams {
     uint256 performanceFee;
@@ -326,7 +326,7 @@ abstract contract BaseStrategy {
         _;
     }
 
-    constructor(address _vault) public {
+    constructor(address _vault) {
         _initialize(_vault, msg.sender, msg.sender, msg.sender);
     }
 
@@ -352,7 +352,7 @@ abstract contract BaseStrategy {
 
         vault = VaultAPI(_vault);
         want = IERC20(vault.token());
-        want.safeApprove(_vault, uint256(-1)); // Give Vault unlimited access (might save gas)
+        want.safeApprove(_vault, type(uint256).max); // Give Vault unlimited access (might save gas)
         strategist = _strategist;
         rewards = _rewards;
         keeper = _keeper;
@@ -363,7 +363,7 @@ abstract contract BaseStrategy {
         profitFactor = 100;
         debtThreshold = 0;
 
-        vault.approve(rewards, uint256(-1)); // Allow rewards to be pulled
+        vault.approve(rewards, type(uint256).max); // Allow rewards to be pulled
     }
 
     function setHealthCheck(address _healthCheck) external onlyVaultManagers {
@@ -420,7 +420,7 @@ abstract contract BaseStrategy {
         require(_rewards != address(0));
         vault.approve(rewards, 0);
         rewards = _rewards;
-        vault.approve(rewards, uint256(-1));
+        vault.approve(rewards, type(uint256).max);
         emit UpdatedRewards(_rewards);
     }
 
@@ -906,7 +906,7 @@ abstract contract BaseStrategyInitializable is BaseStrategy {
     bool public isOriginal = true;
     event Cloned(address indexed clone);
 
-    constructor(address _vault) public BaseStrategy(_vault) {}
+    constructor(address _vault) BaseStrategy(_vault) {}
 
     function initialize(
         address _vault,

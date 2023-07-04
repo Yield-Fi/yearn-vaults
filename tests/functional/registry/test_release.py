@@ -1,7 +1,7 @@
 import brownie
 
 
-def test_release_management(gov, registry, create_vault, rando):
+def test_release_management(gov, registry, create_vault, rando, VaultConfig):
     # No releases yet
     with brownie.reverts():
         registry.latestRelease()
@@ -29,6 +29,9 @@ def test_release_management(gov, registry, create_vault, rando):
     with brownie.reverts():
         registry.endorseVault(v1_vault)
 
+    vault_config_rando = VaultConfig.deploy({"from": rando})
+    vault_config_rando.initialize(rando, rando, rando, rando, rando, {"from": rando})
+    vault_config_rando.whitelist(gov, {'from': rando})
     # Check that newRelease works even if vault governance is not gov
-    bad_vault = create_vault(governance=rando)
+    bad_vault = create_vault(governance=rando, config=vault_config_rando)
     registry.newRelease(bad_vault, {"from": gov})

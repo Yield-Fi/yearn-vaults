@@ -17,39 +17,42 @@ def token_false_return(gov, TokenFalseReturn):
 
 
 @pytest.fixture
-def vault(gov, management, token, Vault):
+def vault(gov, management, token, Vault, vault_config):
     # NOTE: Because the fixture has tokens in it already
     vault = gov.deploy(Vault)
     vault.initialize(
-        token, gov, gov, token.symbol() + " yVault", "yv" + token.symbol(), gov, gov
+        token, token.symbol() + " yVault", "yv" + token.symbol(), vault_config
     )
-    vault.approveUser(gov, {'from': gov})
     vault.setDepositLimit(MAX_UINT256, {"from": gov})
-    vault.setManagement(management, {"from": gov})
+    vault_config.addVault(vault, {"from": gov})
+
+    vault_config.updateManagement(management, {"from": gov})
     yield vault
 
 
 @pytest.fixture
-def other_vault(gov, Vault, other_token):
+def other_vault(gov, Vault, other_token, vault_config):
     vault = gov.deploy(Vault)
-    vault.initialize(other_token, gov, gov, "", "", gov, gov)
+    vault.initialize(other_token, "", "", vault_config)
+    vault_config.addVault(vault, {"from": gov})
     yield vault
 
 
 @pytest.fixture
-def vault_with_false_returning_token(gov, Vault, token_false_return):
+def vault_with_false_returning_token(gov, Vault, token_false_return, vault_config):
     vault = gov.deploy(Vault)
-    vault.initialize(token_false_return, gov, gov, "", "", gov)
+    vault.initialize(token_false_return, "", "", vault_config)
+    vault_config.addVault(vault, {"from": gov})
     vault.setDepositLimit(MAX_UINT256, {"from": gov})
     yield vault
 
 
 def test_credit_available_minDebtPerHarvest_larger_than_available(
-    Vault, TestStrategy, token, gov
+    Vault, TestStrategy, token, gov, vault_config
 ):
     vault = gov.deploy(Vault)
     vault.initialize(
-        token, gov, gov, token.symbol() + " yVault", "yv" + token.symbol(), gov, gov
+        token, token.symbol() + " yVault", "yv" + token.symbol(), vault_config
     )
     vault.setDepositLimit(MAX_UINT256, {"from": gov})
     strategy = gov.deploy(TestStrategy, vault)
@@ -94,11 +97,13 @@ def test_credit_available_minDebtPerHarvest_larger_than_available(
     assert creditAvalable == 0
 
 
-def test_regular_available_deposit_limit(Vault, token, gov):
+def test_regular_available_deposit_limit(Vault, token, gov, vault_config):
     vault = gov.deploy(Vault)
     vault.initialize(
-        token, gov, gov, token.symbol() + " yVault", "yv" + token.symbol(), gov
+        token, token.symbol() + " yVault", "yv" + token.symbol(), vault_config
     )
+    vault_config.addVault(vault, {"from": gov})
+
     token.approve(vault, 100, {"from": gov})
     vault.setDepositLimit(100)
 
@@ -109,11 +114,13 @@ def test_regular_available_deposit_limit(Vault, token, gov):
     assert vault.availableDepositLimit() == 0
 
 
-def test_negative_available_deposit_limit(Vault, token, gov):
+def test_negative_available_deposit_limit(Vault, token, gov, vault_config):
     vault = gov.deploy(Vault)
     vault.initialize(
-        token, gov, gov, token.symbol() + " yVault", "yv" + token.symbol(), gov
+        token, token.symbol() + " yVault", "yv" + token.symbol(), vault_config
     )
+    vault_config.addVault(vault, {"from": gov})
+
     token.approve(vault, 100, {"from": gov})
     vault.setDepositLimit(100)
 
@@ -253,7 +260,7 @@ def test_report_loss(chain, token, gov, vault, strategy, accounts):
 
 
 def test_sandwich_attack(
-    chain, TestStrategy, web3, token, gov, vault, strategist, rando
+    chain, TestStrategy, web3, token, gov, vault, strategist, rando, vault_config
 ):
 
     honest_lp = gov
@@ -265,8 +272,8 @@ def test_sandwich_attack(
 
     # we don't use the one in conftest because we want no rate limit
     strategy = strategist.deploy(TestStrategy, vault)
-    vault.setManagementFee(0, {"from": gov})
-    vault.setPerformanceFee(0, {"from": gov})
+    vault_config.updateManagementFee(vault.address, 0, {"from": gov})
+    vault_config.setPerformanceFee(vault.address, 0, {"from": gov})
     vault.addStrategy(strategy, 4_000, 0, MAX_UINT256, 0, {"from": gov})
     vault.updateStrategyPerformanceFee(strategy, 0, {"from": gov})
 

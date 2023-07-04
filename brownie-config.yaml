@@ -6,14 +6,18 @@ autofetch_sources: true
 
 # require OpenZepplin Contracts
 dependencies:
-  - OpenZeppelin/openzeppelin-contracts@3.1.0
+  - OpenZeppelin/openzeppelin-contracts@4.6.0
 
 # path remapping to support OpenZepplin imports with NPM-style path
 compiler:
   solc:
-    version: 0.6.12
+    version: 0.8.20
+    optimizer:
+        runs: 200
+        enabled: true
     remappings:
-      - "@openzeppelin=OpenZeppelin/openzeppelin-contracts@3.1.0"
+      - '@openzeppelin=OpenZeppelin/openzeppelin-contracts@4.6.0'
+      - '@openzeppelinupgradeable=OpenZeppelin/openzeppelin-contracts-upgradeable@4.6.0'
 
 reports:
   exclude_paths:
@@ -22,3 +26,6 @@ reports:
     - SafeMath
     - SafeERC20
     - Address
+wallets :
+  from_key: ${PRIVATE_KEY}
+  t_from_key : ${T_PRIVATE_KEY}

@@ -18,17 +18,18 @@ def test_api_adherrance(check_api_adherrance, Vault, interface):
     check_api_adherrance(Vault, interface.VaultAPI)
 
 
-def test_vault_deployment(guardian, gov, rewards, token, Vault):
+def test_vault_deployment(guardian, gov, rewards, token, Vault, vault_config):
     # Deploy the Vault without any name/symbol overrides
     vault = guardian.deploy(Vault)
     vault.initialize(
-        token,
-        gov,
-        rewards,
+        token, 
         token.symbol() + " yVault",
         "yv" + token.symbol(),
-        guardian,
+        vault_config,
+        gov
     )
+    vault_config.addVault(vault.address)
+
     # Addresses
     assert vault.governance() == gov
     assert vault.management() == guardian
@@ -50,21 +51,27 @@ def test_vault_deployment(guardian, gov, rewards, token, Vault):
     assert vault.pricePerShare() / (10 ** vault.decimals()) == 1.0
 
 
-def test_vault_name_symbol_override(guardian, gov, rewards, token, Vault):
+def test_vault_name_symbol_override(guardian, gov, rewards, token, Vault, vault_config):
     # Deploy the Vault with name/symbol overrides
     vault = guardian.deploy(Vault)
-    vault.initialize(token, gov, rewards, "crvY yVault", "yvcrvY", guardian)
+    vault.initialize(
+        token, 
+        "crvY yVault",
+        "yvcrvY",
+        vault_config,
+        gov
+    )
     # Assert that the overrides worked
     assert vault.name() == "crvY yVault"
     assert vault.symbol() == "yvcrvY"
 
 
-def test_vault_reinitialization(guardian, gov, rewards, token, Vault):
+def test_vault_reinitialization(guardian, gov, rewards, token, Vault, vault_config):
     vault = guardian.deploy(Vault)
-    vault.initialize(token, gov, rewards, "crvY yVault", "yvcrvY", guardian)
+    vault.initialize(token, "crvY yVault", "yvcrvY", vault_config)
     # Can't reinitialize a vault
     with brownie.reverts():
-        vault.initialize(token, gov, rewards, "crvY yVault", "yvcrvY", guardian)
+        vault.initialize(token, "crvY yVault", "yvcrvY", vault_config)
 
 
 @pytest.mark.parametrize(
@@ -183,26 +190,26 @@ def test_min_max_debtIncrease(gov, vault, TestStrategy):
         )
 
 
-def test_vault_setGovernance(gov, vault, rando):
+def test_vault_setGovernance(gov, vault, rando, vault_config):
     newGov = rando
     # No one can set governance but governance
     with brownie.reverts():
-        vault.setGovernance(newGov, {"from": newGov})
+        vault_config.setGovernance(newGov, {"from": newGov})
     # Governance doesn't change until it's accepted
-    vault.setGovernance(newGov, {"from": gov})
-    assert vault.governance() == gov
+    vault_config.setGovernance(newGov, {"from": gov})
+    assert vault_config.governance() == gov
     # Only new governance can accept a change of governance
     with brownie.reverts():
-        vault.acceptGovernance({"from": gov})
+        vault_config.acceptGovernance({"from": gov})
     # Governance doesn't change until it's accepted
-    vault.acceptGovernance({"from": newGov})
-    assert vault.governance() == newGov
+    vault_config.acceptGovernance({"from": newGov})
+    assert vault_config.governance() == newGov
     # No one can set governance but governance
     with brownie.reverts():
-        vault.setGovernance(newGov, {"from": gov})
+        vault_config.setGovernance(newGov, {"from": gov})
     # Only new governance can accept a change of governance
     with brownie.reverts():
-        vault.acceptGovernance({"from": gov})
+        vault_config.acceptGovernance({"from": gov})
 
 
 def test_vault_setLockedProfitDegradation_range(gov, vault):
@@ -218,7 +225,7 @@ def test_vault_setLockedProfitDegradation_range(gov, vault):
 
 def test_vault_setParams_bad_vals(gov, vault):
     with brownie.reverts():
-        vault.setRewards(ZERO_ADDRESS, {"from": gov})
+        vault_config.updateRewards(ZERO_ADDRESS, {"from": gov})
 
     with brownie.reverts():
-        vault.setRewards(vault, {"from": gov})
+        vault_config.updateRewards(vault, {"from": gov})

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.6.12;
+pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -15,6 +15,7 @@ contract AffiliateToken is ERC20, BaseWrapper {
 
     /// @notice A record of states for signing / validating signatures
     mapping(address => uint256) public nonces;
+    uint8 decimals_;
 
     address public affiliate;
 
@@ -30,10 +31,14 @@ contract AffiliateToken is ERC20, BaseWrapper {
         address _registry,
         string memory name,
         string memory symbol
-    ) public BaseWrapper(_token, _registry) ERC20(name, symbol) {
+    ) BaseWrapper(_token, _registry) ERC20(name, symbol) {
         DOMAIN_SEPARATOR = keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256(bytes(name)), keccak256(bytes("1")), _getChainId(), address(this)));
         affiliate = msg.sender;
-        _setupDecimals(uint8(ERC20(address(token)).decimals()));
+        decimals_ = ERC20(address(token)).decimals();
+    }
+
+    function decimals() public view override returns (uint8) {
+        return decimals_;
     }
 
     function _getChainId() internal view returns (uint256) {
@@ -57,29 +62,29 @@ contract AffiliateToken is ERC20, BaseWrapper {
         uint256 totalShares = totalSupply();
 
         if (totalShares > 0) {
-            return totalVaultBalance(address(this)).mul(numShares).div(totalShares);
+            return totalVaultBalance(address(this)) * numShares  / totalShares;
         } else {
             return numShares;
         }
     }
 
     function pricePerShare() external view returns (uint256) {
-        return totalVaultBalance(address(this)).mul(10**uint256(decimals())).div(totalSupply());
+        return totalVaultBalance(address(this)) * (10**uint256(decimals())) / (totalSupply());
     }
 
     function _sharesForValue(uint256 amount) internal view returns (uint256) {
         // total wrapper assets before deposit (assumes deposit already occured)
-        uint256 totalWrapperAssets = totalVaultBalance(address(this)).sub(amount);
+        uint256 totalWrapperAssets = totalVaultBalance(address(this)) - (amount);
 
         if (totalWrapperAssets > 0) {
-            return totalSupply().mul(amount).div(totalWrapperAssets);
+            return totalSupply() * (amount) / (totalWrapperAssets);
         } else {
             return amount;
         }
     }
 
     function deposit() external returns (uint256) {
-        return deposit(uint256(-1)); // Deposit everything
+        return deposit(type(uint256).max); // Deposit everything
     }
 
     function deposit(uint256 amount) public returns (uint256 deposited) {
