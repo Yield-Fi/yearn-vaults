@@ -88,6 +88,12 @@ def strategist(accounts):
 def keeper(accounts):
     yield accounts[5]
 
+@pytest.fixture
+def liquidator(accounts):
+    yield accounts[6]
+
+
+
 
 @pytest.fixture(autouse=True)
 def StrategyLib(strategist, StrategyLib):
