@@ -54,8 +54,8 @@ def create_vault(gov, rewards, guardian, create_token, patch_vault_version):
             guardian,
         )
         vault.approveUser(gov, {'from': gov})
-        vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
-        assert vault.depositLimit() == 2 ** 256 - 1
+        vault.setDepositLimit(2**256 - 1, {"from": gov})
+        assert vault.depositLimit() == 2**256 - 1
         assert vault.token() == token
         return vault
 
@@ -100,7 +100,7 @@ def pleb(accounts, andre, token, vault):
     bal = token.totalSupply() // 10000
     token.transfer(a, bal, {"from": andre})
     # Unlimited Approvals
-    token.approve(vault, 2 ** 256 - 1, {"from": a})
+    token.approve(vault, 2**256 - 1, {"from": a})
     # Deposit half their stack
     vault.deposit(bal // 2, {"from": a})
     yield a
@@ -114,7 +114,7 @@ def chad(accounts, andre, token, vault):
     bal = token.totalSupply() // 1000
     token.transfer(a, bal, {"from": andre})
     # Unlimited Approvals
-    token.approve(vault, 2 ** 256 - 1, {"from": a})
+    token.approve(vault, 2**256 - 1, {"from": a})
     # Deposit half their stack
     vault.deposit(bal // 2, {"from": a})
     yield a
@@ -128,7 +128,7 @@ def greyhat(accounts, andre, token, vault):
     bal = token.totalSupply() // 100
     token.transfer(a, bal, {"from": andre})
     # Unlimited Approvals
-    token.approve(vault, 2 ** 256 - 1, {"from": a})
+    token.approve(vault, 2**256 - 1, {"from": a})
     # Deposit half their stack
     vault.deposit(bal // 2, {"from": a})
     yield a
@@ -142,7 +142,7 @@ def whale(accounts, andre, token, vault):
     bal = token.totalSupply() // 10
     token.transfer(a, bal, {"from": andre})
     # Unlimited Approvals
-    token.approve(vault, 2 ** 256 - 1, {"from": a})
+    token.approve(vault, 2**256 - 1, {"from": a})
     # Deposit half their stack
     vault.deposit(bal // 2, {"from": a})
     yield a

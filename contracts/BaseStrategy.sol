@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity >=0.8.0;
-pragma experimental ABIEncoderV2;
+pragma solidity >=0.8.15;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 struct StrategyParams {
     uint256 performanceFee;
@@ -169,6 +168,10 @@ interface HealthCheck {
     ) external view returns (bool);
 }
 
+interface IBaseFee {
+    function isCurrentBaseFeeAcceptable() external view returns (bool);
+}
+
 /**
  * @title Yearn Base Strategy
  * @author yearn.finance
@@ -187,7 +190,6 @@ interface HealthCheck {
  */
 
 abstract contract BaseStrategy {
-    using SafeMath for uint256;
     using SafeERC20 for IERC20;
     string public metadataURI;
 
@@ -203,7 +205,7 @@ abstract contract BaseStrategy {
      * @return A string which holds the current API version of this contract.
      */
     function apiVersion() public pure returns (string memory) {
-        return "0.4.3";
+        return "0.4.6";
     }
 
     /**
@@ -255,9 +257,11 @@ abstract contract BaseStrategy {
 
     event UpdatedMaxReportDelay(uint256 delay);
 
-    event UpdatedProfitFactor(uint256 profitFactor);
+    event UpdatedBaseFeeOracle(address baseFeeOracle);
 
-    event UpdatedDebtThreshold(uint256 debtThreshold);
+    event UpdatedCreditThreshold(uint256 creditThreshold);
+
+    event ForcedHarvestTrigger(bool triggerState);
 
     event EmergencyExitEnabled();
 
@@ -274,56 +278,86 @@ abstract contract BaseStrategy {
     // `setMaxReportDelay()` for more details.
     uint256 public maxReportDelay;
 
-    // The minimum multiple that `callCost` must be above the credit/profit to
-    // be "justifiable". See `setProfitFactor()` for more details.
-    uint256 public profitFactor;
-
-    // Use this to adjust the threshold at which running a debt causes a
-    // harvest trigger. See `setDebtThreshold()` for more details.
-    uint256 public debtThreshold;
-
     // See note on `setEmergencyExit()`.
     bool public emergencyExit;
 
+    // See note on `isBaseFeeOracleAcceptable()`.
+    address public baseFeeOracle;
+
+    // See note on `setCreditThreshold()`
+    uint256 public creditThreshold;
+
+    // See note on `setForceHarvestTriggerOnce`
+    bool public forceHarvestTriggerOnce;
+
     // modifiers
     modifier onlyAuthorized() {
-        require(msg.sender == strategist || msg.sender == governance(), "!authorized");
+        _onlyAuthorized();
         _;
     }
 
     modifier onlyEmergencyAuthorized() {
-        require(
-            msg.sender == strategist || msg.sender == governance() || msg.sender == vault.guardian() || msg.sender == vault.management(),
-            "!authorized"
-        );
+        _onlyEmergencyAuthorized();
         _;
     }
 
     modifier onlyStrategist() {
-        require(msg.sender == strategist, "!strategist");
+        _onlyStrategist();
         _;
     }
 
     modifier onlyGovernance() {
-        require(msg.sender == governance(), "!authorized");
+        _onlyGovernance();
+        _;
+    }
+
+    modifier onlyRewarder() {
+        _onlyRewarder();
         _;
     }
 
     modifier onlyKeepers() {
+        _onlyKeepers();
+        _;
+    }
+
+    modifier onlyVaultManagers() {
+        _onlyVaultManagers();
+        _;
+    }
+
+    function _onlyAuthorized() internal {
+        require(msg.sender == strategist || msg.sender == governance());
+    }
+
+    function _onlyEmergencyAuthorized() internal {
+        require(msg.sender == strategist || msg.sender == governance() || msg.sender == vault.guardian() || msg.sender == vault.management());
+    }
+
+    function _onlyStrategist() internal {
+        require(msg.sender == strategist);
+    }
+
+    function _onlyGovernance() internal {
+        require(msg.sender == governance());
+    }
+
+    function _onlyRewarder() internal {
+        require(msg.sender == governance() || msg.sender == strategist);
+    }
+
+    function _onlyKeepers() internal {
         require(
             msg.sender == keeper ||
                 msg.sender == strategist ||
                 msg.sender == governance() ||
                 msg.sender == vault.guardian() ||
-                msg.sender == vault.management(),
-            "!authorized"
+                msg.sender == vault.management()
         );
-        _;
     }
 
-    modifier onlyVaultManagers() {
-        require(msg.sender == vault.management() || msg.sender == governance(), "!authorized");
-        _;
+    function _onlyVaultManagers() internal {
+        require(msg.sender == vault.management() || msg.sender == governance());
     }
 
     constructor(address _vault) {
@@ -358,10 +392,8 @@ abstract contract BaseStrategy {
         keeper = _keeper;
 
         // initialize variables
-        minReportDelay = 0;
-        maxReportDelay = 86400;
-        profitFactor = 100;
-        debtThreshold = 0;
+        maxReportDelay = 30 days;
+        creditThreshold = 1_000_000 * 10**vault.decimals(); // set this high by default so we don't get tons of false triggers if not changed
 
         vault.approve(rewards, type(uint256).max); // Allow rewards to be pulled
     }
@@ -416,7 +448,7 @@ abstract contract BaseStrategy {
      *  This may only be called by the strategist.
      * @param _rewards The address to use for pulling rewards.
      */
-    function setRewards(address _rewards) external onlyStrategist {
+    function setRewards(address _rewards) external onlyRewarder {
         require(_rewards != address(0));
         vault.approve(rewards, 0);
         rewards = _rewards;
@@ -460,35 +492,44 @@ abstract contract BaseStrategy {
 
     /**
      * @notice
-     *  Used to change `profitFactor`. `profitFactor` is used to determine
-     *  if it's worthwhile to harvest, given gas costs. (See `harvestTrigger()`
-     *  for more details.)
+     *  Used to ensure that any significant credit a strategy has from the
+     *  vault will be automatically harvested.
      *
-     *  This may only be called by governance or the strategist.
-     * @param _profitFactor A ratio to multiply anticipated
-     * `harvest()` gas cost against.
+     *  This may only be called by governance or management.
+     * @param _creditThreshold The number of want tokens that will
+     *  automatically trigger a harvest.
      */
-    function setProfitFactor(uint256 _profitFactor) external onlyAuthorized {
-        profitFactor = _profitFactor;
-        emit UpdatedProfitFactor(_profitFactor);
+    function setCreditThreshold(uint256 _creditThreshold) external onlyVaultManagers {
+        creditThreshold = _creditThreshold;
+        emit UpdatedCreditThreshold(_creditThreshold);
     }
 
     /**
      * @notice
-     *  Sets how far the Strategy can go into loss without a harvest and report
-     *  being required.
+     *  Used to automatically trigger a harvest by our keepers. Can be
+     *  useful if gas prices are too high now, and we want to harvest
+     *  later once prices have lowered.
      *
-     *  By default this is 0, meaning any losses would cause a harvest which
-     *  will subsequently report the loss to the Vault for tracking. (See
-     *  `harvestTrigger()` for more details.)
-     *
-     *  This may only be called by governance or the strategist.
-     * @param _debtThreshold How big of a loss this Strategy may carry without
-     * being required to report to the Vault.
+     *  This may only be called by governance or management.
+     * @param _forceHarvestTriggerOnce Value of true tells keepers to harvest
+     *  our strategy
      */
-    function setDebtThreshold(uint256 _debtThreshold) external onlyAuthorized {
-        debtThreshold = _debtThreshold;
-        emit UpdatedDebtThreshold(_debtThreshold);
+    function setForceHarvestTriggerOnce(bool _forceHarvestTriggerOnce) external onlyVaultManagers {
+        forceHarvestTriggerOnce = _forceHarvestTriggerOnce;
+        emit ForcedHarvestTrigger(_forceHarvestTriggerOnce);
+    }
+
+    /**
+     * @notice
+     *  Used to set our baseFeeOracle, which checks the network's current base
+     *  fee price to determine whether it is an optimal time to harvest or tend.
+     *
+     *  This may only be called by governance or management.
+     * @param _baseFeeOracle Address of our baseFeeOracle
+     */
+    function setBaseFeeOracle(address _baseFeeOracle) external onlyVaultManagers {
+        baseFeeOracle = _baseFeeOracle;
+        emit UpdatedBaseFeeOracle(_baseFeeOracle);
     }
 
     /**
@@ -654,6 +695,7 @@ abstract contract BaseStrategy {
         // signal for that.
         // If your implementation uses the cost of the call in want, you can
         // use uint256 callCost = ethToWant(callCostInWei);
+        // It is highly suggested to use the baseFeeOracle here as well.
 
         return false;
     }
@@ -688,11 +730,17 @@ abstract contract BaseStrategy {
      *  This call and `tendTrigger` should never return `true` at the
      *  same time.
      *
-     *  See `min/maxReportDelay`, `profitFactor`, `debtThreshold` to adjust the
+     *  See `maxReportDelay`, `creditThreshold` to adjust the
      *  strategist-controlled parameters that will influence whether this call
      *  returns `true` or not. These parameters will be used in conjunction
      *  with the parameters reported to the Vault (see `params`) to determine
      *  if calling `harvest()` is merited.
+     *
+     *  This trigger also checks the network's base fee to avoid harvesting during
+     *  times of high network congestion.
+     *
+     *  Consider use of super.harvestTrigger() in any override to build on top
+     *  of this logic instead of replacing it. For example, if using `minReportDelay`.
      *
      *  It is expected that an external system will check `harvestTrigger()`.
      *  This could be a script run off a desktop or cloud bot (e.g.
@@ -703,38 +751,32 @@ abstract contract BaseStrategy {
      * @return `true` if `harvest()` should be called, `false` otherwise.
      */
     function harvestTrigger(uint256 callCostInWei) public view virtual returns (bool) {
-        uint256 callCost = ethToWant(callCostInWei);
-        StrategyParams memory params = vault.strategies(address(this));
+        // Should not trigger if strategy is not active (no assets or no debtRatio)
+        if (!isActive()) return false;
 
-        // Should not trigger if Strategy is not activated
-        if (params.activation == 0) return false;
+        // check if the base fee gas price is higher than we allow. if it is, block harvests.
+        if (!isBaseFeeAcceptable()) return false;
 
-        // Should not trigger if we haven't waited long enough since previous harvest
-        if (block.timestamp.sub(params.lastReport) < minReportDelay) return false;
+        // trigger if we want to manually harvest, but only if our gas price is acceptable
+        if (forceHarvestTriggerOnce) return true;
 
         // Should trigger if hasn't been called in a while
-        if (block.timestamp.sub(params.lastReport) >= maxReportDelay) return true;
+        StrategyParams memory params = vault.strategies(address(this));
+        if ((block.timestamp - params.lastReport) >= maxReportDelay) return true;
 
-        // If some amount is owed, pay it back
-        // NOTE: Since debt is based on deposits, it makes sense to guard against large
-        //       changes to the value from triggering a harvest directly through user
-        //       behavior. This should ensure reasonable resistance to manipulation
-        //       from user-initiated withdrawals as the outstanding debt fluctuates.
-        uint256 outstanding = vault.debtOutstanding();
-        if (outstanding > debtThreshold) return true;
+        // harvest our credit if it's above our threshold or return false
+        return (vault.creditAvailable() > creditThreshold);
+    }
 
-        // Check for profits and losses
-        uint256 total = estimatedTotalAssets();
-        // Trigger if we have a loss to report
-        if (total.add(debtThreshold) < params.totalDebt) return true;
-
-        uint256 profit = 0;
-        if (total > params.totalDebt) profit = total.sub(params.totalDebt); // We've earned a profit!
-
-        // Otherwise, only trigger if it "makes sense" economically (gas cost
-        // is <N% of value moved)
-        uint256 credit = vault.creditAvailable();
-        return (profitFactor.mul(callCost) < credit.add(profit));
+    /**
+     * @notice
+     *  Check if the current network base fee is below our external target. If
+     *  not, then harvestTrigger will return false.
+     * @return `true` if `harvest()` should be allowed, `false` otherwise.
+     */
+    function isBaseFeeAcceptable() public view returns (bool) {
+        if (baseFeeOracle == address(0)) return true;
+        else return IBaseFee(baseFeeOracle).isCurrentBaseFeeAcceptable();
     }
 
     /**
@@ -763,15 +805,19 @@ abstract contract BaseStrategy {
             // Free up as much capital as possible
             uint256 amountFreed = liquidateAllPositions();
             if (amountFreed < debtOutstanding) {
-                loss = debtOutstanding.sub(amountFreed);
+                loss = debtOutstanding - amountFreed;
             } else if (amountFreed > debtOutstanding) {
-                profit = amountFreed.sub(debtOutstanding);
+                profit = amountFreed - debtOutstanding;
             }
-            debtPayment = debtOutstanding.sub(loss);
+            debtPayment = debtOutstanding - loss;
         } else {
             // Free up returns for Vault to pull
             (profit, loss, debtPayment) = prepareReturn(debtOutstanding);
         }
+
+        // we're done harvesting, so reset our trigger if we used it
+        forceHarvestTriggerOnce = false;
+        emit ForcedHarvestTrigger(false);
 
         // Allow Vault to take up to the "harvested" balance of this contract,
         // which is the amount it has earned since the last time it reported to
@@ -849,7 +895,9 @@ abstract contract BaseStrategy {
      */
     function setEmergencyExit() external onlyEmergencyAuthorized {
         emergencyExit = true;
-        vault.revokeStrategy();
+        if (vault.strategies(address(this)).debtRatio != 0) {
+            vault.revokeStrategy();
+        }
 
         emit EmergencyExitEnabled();
     }
@@ -918,8 +966,7 @@ abstract contract BaseStrategyInitializable is BaseStrategy {
     }
 
     function clone(address _vault) external returns (address) {
-        require(isOriginal, "!clone");
-        return this.clone(_vault, msg.sender, msg.sender, msg.sender);
+        return clone(_vault, msg.sender, msg.sender, msg.sender);
     }
 
     function clone(
@@ -927,7 +974,8 @@ abstract contract BaseStrategyInitializable is BaseStrategy {
         address _strategist,
         address _rewards,
         address _keeper
-    ) external returns (address newStrategy) {
+    ) public returns (address newStrategy) {
+        require(isOriginal, "!clone");
         // Copied from https://github.com/optionality/clone-factory/blob/master/contracts/CloneFactory.sol
         bytes20 addressBytes = bytes20(address(this));
 

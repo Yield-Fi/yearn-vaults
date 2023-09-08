@@ -24,7 +24,7 @@ def strategy(gov, strategist, keeper, rewards, vault, TestStrategy):
         strategy,
         4_000,  # 40% of Vault
         0,  # Minimum debt increase per harvest
-        2 ** 256 - 1,  # maximum debt increase per harvest
+        2**256 - 1,  # maximum debt increase per harvest
         1000,  # 10% performance fee for Strategist
         {"from": gov},
     )
@@ -67,11 +67,18 @@ def test_clone(
     assert new_strategy.rewards() == guardian
     assert new_strategy.keeper() == strategist
 
-    # test state variables have been initialized with default (hardcoded) values
-    assert new_strategy.minReportDelay() == 0
-    assert new_strategy.maxReportDelay() == 86400
-    assert new_strategy.profitFactor() == 100
-    assert new_strategy.debtThreshold() == 0
+    # test state variables have been initialized with default (hardcoded) values, same as original strategy
+    old_min = strategy.minReportDelay()
+    old_max = strategy.maxReportDelay()
+    old_force = strategy.forceHarvestTriggerOnce()
+    old_oracle = strategy.baseFeeOracle()
+
+    # threshold varies by token so we don't check the other vault for it
+    assert new_strategy.minReportDelay() == old_min
+    assert new_strategy.maxReportDelay() == old_max
+    assert new_strategy.creditThreshold() == 1_000_000 * 10 ** other_vault.decimals()
+    assert new_strategy.forceHarvestTriggerOnce() == old_force
+    assert new_strategy.baseFeeOracle() == old_oracle
 
 
 def test_double_initialize(TestStrategy, vault, other_vault, gov):

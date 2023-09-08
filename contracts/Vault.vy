@@ -35,7 +35,7 @@
     https://github.com/iearn-finance/yearn-vaults/blob/main/SPECIFICATION.md
 """
 
-API_VERSION: constant(String[28]) = "0.4.3"
+API_VERSION: constant(String[28]) = "0.4.6"
 
 from vyper.interfaces import ERC20
 
@@ -143,6 +143,28 @@ event StrategyReported:
     debtAdded: uint256
     debtRatio: uint256
 
+event FeeReport:
+    management_fee: uint256
+    performance_fee: uint256
+    strategist_fee: uint256
+    duration: uint256
+
+event WithdrawFromStrategy:
+    strategy: indexed(address)
+    totalDebt: uint256
+    loss: uint256
+
+event UpdateGovernance:
+    governance: address # New active governance
+
+
+event UpdateManagement:
+    management: address # New active manager
+
+event UpdateRewards:
+    rewards: address # New active rewards recipient
+
+
 event UpdateDepositLimit:
     depositLimit: uint256 # New active deposit limit
 
@@ -184,8 +206,8 @@ event StrategyRemovedFromQueue:
 event StrategyAddedToQueue:
     strategy: indexed(address) # Address of the strategy that is added to the withdrawal queue
 
-event UpdateHealthCheck:
-    healthCheck: indexed(address)
+event NewPendingGovernance:
+    pendingGovernance: indexed(address)
 
 event WithdrawFromStrategy:
     strategy: indexed(address)
@@ -219,6 +241,7 @@ emergencyShutdown: public(bool)
 
 depositLimit: public(uint256)  # Limit for totalAssets the Vault can hold
 debtRatio: public(uint256)  # Debt ratio for the Vault across all strategies (in BPS, <= 10k)
+totalIdle: public(uint256)  # Amount of tokens that are in the vault
 totalDebt: public(uint256)  # Amount of tokens that all strategies have borrowed
 totalIdle: public(uint256)  # Amount of tokens that are in the vault
 lastReport: public(uint256)  # block.timestamp of last report
@@ -291,6 +314,7 @@ def initialize(
     self.lastReport = block.timestamp
     self.activation = block.timestamp
     self.lockedProfitDegradation = convert(DEGRADATION_COEFFICIENT * 46 / 10 ** 6 , uint256) # 6 hours in blocks
+    # EIP-712
 
 @pure
 @external
@@ -349,6 +373,77 @@ def setSymbol(symbol: String[32]):
     """
     assert msg.sender == VaultConfig(self.config).governance()
     self.symbol = symbol
+
+@external
+def setGovernance(governance: address):
+    """
+    @notice
+        Nominate a new address to use as governance.
+
+        The change does not go into effect immediately. This function sets a
+        pending change, and the governance address is not updated until
+        the proposed governance address has accepted the responsibility.
+
+        This may only be called by the current governance address.
+    @param governance The address requested to take over Vault governance.
+    """
+    assert msg.sender == self.governance
+    log NewPendingGovernance(governance)
+    self.pendingGovernance = governance
+
+
+@external
+def acceptGovernance():
+    """
+    @notice
+        Once a new governance address has been proposed using setGovernance(),
+        this function may be called by the proposed address to accept the
+        responsibility of taking over governance for this contract.
+
+        This may only be called by the proposed governance address.
+    @dev
+        setGovernance() should be called by the existing governance address,
+        prior to calling this function.
+    """
+    assert msg.sender == self.pendingGovernance
+    self.governance = msg.sender
+    log UpdateGovernance(msg.sender)
+
+
+@external
+def setManagement(management: address):
+    """
+    @notice
+        Changes the management address.
+        Management is able to make some investment decisions adjusting parameters.
+
+        This may only be called by governance.
+    @param management The address to use for managing.
+    """
+    assert msg.sender == self.governance
+    self.management = management
+    log UpdateManagement(management)
+
+
+@external
+def setRewards(rewards: address):
+    """
+    @notice
+        Changes the rewards address. Any distributed rewards
+        will cease flowing to the old address and begin flowing
+        to this address once the change is in effect.
+
+        This will not change any Strategy reports in progress, only
+        new reports made after this change goes into effect.
+
+        This may only be called by governance.
+    @param rewards The address to use for collecting rewards.
+    """
+    assert msg.sender == self.governance
+    assert not (rewards in [self, ZERO_ADDRESS])
+    self.rewards = rewards
+    log UpdateRewards(rewards)
+
 
 @external
 def setLockedProfitDegradation(degradation: uint256):
@@ -627,7 +722,7 @@ def permit(owner: address, spender: address, amount: uint256, expiry: uint256, s
     @return True, if transaction completes successfully
     """
     assert owner != ZERO_ADDRESS  # dev: invalid owner
-    assert expiry == 0 or expiry >= block.timestamp  # dev: permit expired
+    assert expiry >= block.timestamp  # dev: permit expired
     nonce: uint256 = self.nonces[owner]
     digest: bytes32 = keccak256(
         concat(
@@ -783,6 +878,7 @@ def deposit(_amount: uint256 = MAX_UINT256, recipient: address = msg.sender) -> 
     # Tokens are transferred from msg.sender (may be different from _recipient)
     self.erc20_safe_transferFrom(self.token.address, msg.sender, self, amount)
     self.totalIdle += amount
+
     log Deposit(recipient, shares, amount)
 
     return shares  # Just in case someone wants them
@@ -943,8 +1039,8 @@ def withdraw(
 
     # See @dev note, above.
     value: uint256 = self._shareValue(shares)
-    
     vault_balance: uint256 = self.totalIdle
+
     if value > vault_balance:
         totalLoss: uint256 = 0
         # We need to go get some from our strategies in the withdrawal queue
@@ -989,6 +1085,7 @@ def withdraw(
             self.strategies[strategy].totalDebt -= withdrawn
             self.totalDebt -= withdrawn
             log WithdrawFromStrategy(strategy, self.strategies[strategy].totalDebt, loss)
+
         self.totalIdle = vault_balance
         # NOTE: We have withdrawn everything possible out of the withdrawal queue
         #       but we still don't have enough to fully pay them back, so adjust
@@ -1007,7 +1104,7 @@ def withdraw(
     self.totalSupply -= shares
     self.balanceOf[msg.sender] -= shares
     log Transfer(msg.sender, ZERO_ADDRESS, shares)
-        
+    
     self.totalIdle -= value
     # Withdraw remaining balance to _recipient (may be different to msg.sender) (minus fee)
     self.erc20_safe_transfer(self.token.address, recipient, value)
@@ -1493,6 +1590,7 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
     # NOTE: may throw if Vault.totalAssets() > 1e64, or not called for more than a year
     if self.strategies[strategy].activation == block.timestamp:
         return 0  # NOTE: Just added, no fees to assess
+
     duration: uint256 = block.timestamp - self.strategies[strategy].lastReport
     assert duration != 0 # can't assessFees twice within the same block
 
@@ -1555,8 +1653,8 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
 
         # NOTE: Governance earns any dust leftover from flooring math above
         if self.balanceOf[self] > 0:
-            self._transfer(self, VaultConfig(self.config).rewards(), self.balanceOf[self])
-    log FeeReport(management_fee, performance_fee, strategist_fee, partner_fee, duration)
+            self._transfer(self, self.rewards, self.balanceOf[self])
+    log FeeReport(management_fee, performance_fee, strategist_fee, duration)
     return total_fee
 
 
@@ -1703,8 +1801,10 @@ def sweep(token: address, amount: uint256 = MAX_UINT256):
     value: uint256 = amount
     if value == MAX_UINT256:
         value = ERC20(token).balanceOf(self)
+
     if token == self.token.address:
         value = self.token.balanceOf(self) - self.totalIdle
+
     log Sweep(token, value)
     self.erc20_safe_transfer(token, VaultConfig(self.config).governance(), value)
 

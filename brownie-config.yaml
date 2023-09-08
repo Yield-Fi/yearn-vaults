@@ -6,18 +6,14 @@ autofetch_sources: true
 
 # require OpenZepplin Contracts
 dependencies:
-  - OpenZeppelin/openzeppelin-contracts@4.6.0
+  - OpenZeppelin/openzeppelin-contracts@4.7.1
 
 # path remapping to support OpenZepplin imports with NPM-style path
 compiler:
   solc:
-    version: 0.8.20
-    optimizer:
-        runs: 200
-        enabled: true
+    version: 0.8.15
     remappings:
-      - '@openzeppelin=OpenZeppelin/openzeppelin-contracts@4.6.0'
-      - '@openzeppelinupgradeable=OpenZeppelin/openzeppelin-contracts-upgradeable@4.6.0'
+      - "@openzeppelin=OpenZeppelin/openzeppelin-contracts@4.7.1"
 
 reports:
   exclude_paths:

@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: MIT
-pragma solidity >=0.8.0;
+pragma solidity ^0.8.15;
 
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract Token is ERC20 {
     mapping(address => bool) public _blocked;
-    uint8 decimals_;
+    uint8 private immutable _decimals;
 
-    constructor(uint8 _decimals) public ERC20("yearn.finance test token", "TEST") {
-        decimals_ =_decimals;
-        _mint(msg.sender, 30000 * 10**uint256(_decimals));
+    constructor(uint8 decimals_) ERC20("yearn.finance test token", "TEST") {
+        _decimals = decimals_;
+        _mint(msg.sender, 30000 * 10**uint256(decimals_));
     }
 
     function decimals() public view override returns (uint8) {
@@ -29,11 +28,13 @@ contract Token is ERC20 {
         require(!_blocked[to], "Token transfer refused. Receiver is on blacklist");
         super._beforeTokenTransfer(from, to, amount);
     }
+
+    function decimals() public view virtual override returns (uint8) {
+        return _decimals;
+    }
 }
 
 contract TokenNoReturn {
-    using SafeMath for uint256;
-
     string public name;
     string public symbol;
     uint8 public decimals;
@@ -61,8 +62,8 @@ contract TokenNoReturn {
 
     function transfer(address receiver, uint256 amount) external {
         require(!_blocked[receiver], "Token transfer refused. Receiver is on blacklist");
-        balanceOf[msg.sender] = balanceOf[msg.sender].sub(amount);
-        balanceOf[receiver] = balanceOf[receiver].add(amount);
+        balanceOf[msg.sender] = balanceOf[msg.sender] - amount;
+        balanceOf[receiver] = balanceOf[receiver] + amount;
         emit Transfer(msg.sender, receiver, amount);
     }
 
@@ -77,9 +78,9 @@ contract TokenNoReturn {
         uint256 amount
     ) external {
         require(!_blocked[receiver], "Token transfer refused. Receiver is on blacklist");
-        allowance[sender][msg.sender] = allowance[sender][msg.sender].sub(amount);
-        balanceOf[sender] = balanceOf[sender].sub(amount);
-        balanceOf[receiver] = balanceOf[receiver].add(amount);
+        allowance[sender][msg.sender] = allowance[sender][msg.sender] - amount;
+        balanceOf[sender] = balanceOf[sender] - amount;
+        balanceOf[receiver] = balanceOf[receiver] + amount;
         emit Transfer(sender, receiver, amount);
     }
 }
