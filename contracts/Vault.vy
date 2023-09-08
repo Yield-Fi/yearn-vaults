@@ -143,27 +143,6 @@ event StrategyReported:
     debtAdded: uint256
     debtRatio: uint256
 
-event FeeReport:
-    management_fee: uint256
-    performance_fee: uint256
-    strategist_fee: uint256
-    duration: uint256
-
-event WithdrawFromStrategy:
-    strategy: indexed(address)
-    totalDebt: uint256
-    loss: uint256
-
-event UpdateGovernance:
-    governance: address # New active governance
-
-
-event UpdateManagement:
-    management: address # New active manager
-
-event UpdateRewards:
-    rewards: address # New active rewards recipient
-
 
 event UpdateDepositLimit:
     depositLimit: uint256 # New active deposit limit
@@ -206,9 +185,6 @@ event StrategyRemovedFromQueue:
 event StrategyAddedToQueue:
     strategy: indexed(address) # Address of the strategy that is added to the withdrawal queue
 
-event NewPendingGovernance:
-    pendingGovernance: indexed(address)
-
 event WithdrawFromStrategy:
     strategy: indexed(address)
     totalDebt: uint256
@@ -243,7 +219,6 @@ depositLimit: public(uint256)  # Limit for totalAssets the Vault can hold
 debtRatio: public(uint256)  # Debt ratio for the Vault across all strategies (in BPS, <= 10k)
 totalIdle: public(uint256)  # Amount of tokens that are in the vault
 totalDebt: public(uint256)  # Amount of tokens that all strategies have borrowed
-totalIdle: public(uint256)  # Amount of tokens that are in the vault
 lastReport: public(uint256)  # block.timestamp of last report
 activation: public(uint256)  # block.timestamp of contract deployment
 lockedProfit: public(uint256) # how much profit is locked and cant be withdrawn
@@ -309,7 +284,6 @@ def initialize(
     self.config = configAddress
 
     self.healthCheck = healthCheck
-    log UpdateHealthCheck(healthCheck)
 
     self.lastReport = block.timestamp
     self.activation = block.timestamp
@@ -373,76 +347,6 @@ def setSymbol(symbol: String[32]):
     """
     assert msg.sender == VaultConfig(self.config).governance()
     self.symbol = symbol
-
-@external
-def setGovernance(governance: address):
-    """
-    @notice
-        Nominate a new address to use as governance.
-
-        The change does not go into effect immediately. This function sets a
-        pending change, and the governance address is not updated until
-        the proposed governance address has accepted the responsibility.
-
-        This may only be called by the current governance address.
-    @param governance The address requested to take over Vault governance.
-    """
-    assert msg.sender == self.governance
-    log NewPendingGovernance(governance)
-    self.pendingGovernance = governance
-
-
-@external
-def acceptGovernance():
-    """
-    @notice
-        Once a new governance address has been proposed using setGovernance(),
-        this function may be called by the proposed address to accept the
-        responsibility of taking over governance for this contract.
-
-        This may only be called by the proposed governance address.
-    @dev
-        setGovernance() should be called by the existing governance address,
-        prior to calling this function.
-    """
-    assert msg.sender == self.pendingGovernance
-    self.governance = msg.sender
-    log UpdateGovernance(msg.sender)
-
-
-@external
-def setManagement(management: address):
-    """
-    @notice
-        Changes the management address.
-        Management is able to make some investment decisions adjusting parameters.
-
-        This may only be called by governance.
-    @param management The address to use for managing.
-    """
-    assert msg.sender == self.governance
-    self.management = management
-    log UpdateManagement(management)
-
-
-@external
-def setRewards(rewards: address):
-    """
-    @notice
-        Changes the rewards address. Any distributed rewards
-        will cease flowing to the old address and begin flowing
-        to this address once the change is in effect.
-
-        This will not change any Strategy reports in progress, only
-        new reports made after this change goes into effect.
-
-        This may only be called by governance.
-    @param rewards The address to use for collecting rewards.
-    """
-    assert msg.sender == self.governance
-    assert not (rewards in [self, ZERO_ADDRESS])
-    self.rewards = rewards
-    log UpdateRewards(rewards)
 
 
 @external
@@ -1653,8 +1557,8 @@ def _assessFees(strategy: address, gain: uint256) -> uint256:
 
         # NOTE: Governance earns any dust leftover from flooring math above
         if self.balanceOf[self] > 0:
-            self._transfer(self, self.rewards, self.balanceOf[self])
-    log FeeReport(management_fee, performance_fee, strategist_fee, duration)
+            self._transfer(self, VaultConfig(self.config).rewards(), self.balanceOf[self])
+    log FeeReport(management_fee, performance_fee, strategist_fee, partner_fee, duration)
     return total_fee
 
 
