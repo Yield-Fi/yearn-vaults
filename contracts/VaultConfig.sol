@@ -2,7 +2,7 @@
 pragma solidity >=0.8.0;
 
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-import "@openzeppelinupgradeable/contracts/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 contract VaultConfig is Initializable {
     using SafeMath for uint256;

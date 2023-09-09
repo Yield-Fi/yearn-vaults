@@ -49,7 +49,7 @@ def token(create_token, request):
 @pytest.fixture
 def vault_config(gov, VaultConfig, partner, management, guardian, rewards, approver):
     vault_config = VaultConfig.deploy({"from": gov})
-    vault_config.initialize(partner, management, guardian, rewards, approver, {"from": gov})
+    vault_config.initialize(gov, partner, management, guardian, rewards, approver, {"from": gov})
     vault_config.whitelist(gov, {'from': approver})
 
     yield vault_config
@@ -60,7 +60,7 @@ def create_vault(gov, guardian, vault_config, create_token, patch_vault_version)
         if token is None:
             token = create_token()
         vault = patch_vault_version(version).deploy({"from": guardian})
-        vault.initialize(token, governance, rewards, "", "", guardian, governance)
+        vault.initialize(token, "", "", vault_config, "0x0000000000000000000000000000000000000000")
         vault.setDepositLimit(2**256 - 1, {"from": governance})
         vault_config.addVault(vault.address)
         return vault
@@ -90,6 +90,10 @@ def strategist(accounts):
 @pytest.fixture
 def keeper(accounts):
     yield accounts[5]
+
+@pytest.fixture
+def liquidator(accounts):
+    yield accounts[6]
 
 
 @pytest.fixture(params=["RegularStrategy", "ClonedStrategy"])
@@ -128,7 +132,7 @@ def registry(gov, Registry):
 
 @pytest.fixture
 def pump_pps(TestStrategy, gov, chain):
-    def pump_pps(vault, amount):
+    def pump_pps(vault, vault_config, amount):
         strategy = gov.deploy(TestStrategy, vault)
         token = Contract.from_abi("token", vault.token(), Token.abi)
         vault.addStrategy(
@@ -141,15 +145,16 @@ def pump_pps(TestStrategy, gov, chain):
         )
         print(f"  {vault}.harvest({amount})")
         token.transfer(strategy, amount, {"from": gov})
-        managementFee = vault.managementFee()
-        performanceFee = vault.performanceFee()
-        vault.setManagementFee(0, {"from": gov})
-        vault.setPerformanceFee(0, {"from": gov})
+        managementFee = vault_config.managementFees(vault)
+        performanceFee = vault_config.performanceFees(vault)
+        
+        vault_config.updateManagementFee(vault, 0, {"from": gov})
+        vault_config.updatePerformanceFee(vault, 0, {"from": gov})
         vault.updateStrategyPerformanceFee(strategy, 0, {"from": gov})
         strategy.harvest()
         assert token.balanceOf(strategy) == 0
-        vault.setManagementFee(managementFee, {"from": gov})
-        vault.setPerformanceFee(performanceFee, {"from": gov})
+        vault_config.updateManagementFee(vault, managementFee, {"from": gov})
+        vault_config.updatePerformanceFee(vault, performanceFee, {"from": gov})
         chain.mine(timedelta=24 * 60 * 60)
 
     yield pump_pps

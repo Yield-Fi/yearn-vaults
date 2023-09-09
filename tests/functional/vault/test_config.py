@@ -18,7 +18,7 @@ def test_api_adherrance(check_api_adherrance, Vault, interface):
     check_api_adherrance(Vault, interface.VaultAPI)
 
 
-def test_vault_deployment(guardian, gov, rewards, token, Vault, vault_config):
+def test_vault_deployment(guardian, gov, rewards, management, token, Vault, vault_config):
     # Deploy the Vault without any name/symbol overrides
     vault = guardian.deploy(Vault)
     vault.initialize(
@@ -32,7 +32,7 @@ def test_vault_deployment(guardian, gov, rewards, token, Vault, vault_config):
 
     # Addresses
     assert vault.governance() == gov
-    assert vault.management() == guardian
+    assert vault.management() == management
     assert vault.guardian() == guardian
     assert vault.rewards() == rewards
     assert vault.token() == token

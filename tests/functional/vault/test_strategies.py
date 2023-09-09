@@ -6,15 +6,15 @@ MAX_UINT256 = 2**256 - 1
 
 
 @pytest.fixture
-def vault(gov, management, token, Vault):
+def vault(gov, token, Vault, vault_config, approver):
     # NOTE: Because the fixture has tokens in it already
     vault = gov.deploy(Vault)
     vault.initialize(
-        token, gov, gov, token.symbol() + " yVault", "yv" + token.symbol(), gov
+        token, token.symbol() + " yVault", "yv" + token.symbol(), vault_config
     )
     vault.setDepositLimit(2**256 - 1, {"from": gov})
-    vault.setManagement(management, {"from": gov})
     yield vault
+
 
 
 @pytest.fixture
@@ -65,15 +65,10 @@ def test_liquidation_after_hack(chain, gov, vault, token, TestStrategy):
 
 
 @pytest.fixture
-def strategy_with_wrong_vault(gov, token, vault, Vault, TestStrategy):
+def strategy_with_wrong_vault(gov, token, vault, vault_config, Vault, TestStrategy):
     otherVault = gov.deploy(Vault)
     otherVault.initialize(
-        token,
-        gov,
-        gov,
-        token.symbol() + " yVault",
-        "yv" + token.symbol(),
-        gov,
+        token, token.symbol() + " yVault", "yv" + token.symbol(), vault_config
     )
     assert otherVault.token() == token
     assert otherVault != vault
@@ -492,9 +487,9 @@ def test_reporting(vault, token, strategy, gov, rando):
         vault.report(0, loss, 0, {"from": strategy})
 
 
-def test_reporting_gains_without_fee(chain, vault, token, strategy, gov, rando):
-    vault.setManagementFee(0, {"from": gov})
-    vault.setPerformanceFee(0, {"from": gov})
+def test_reporting_gains_without_fee(chain, vault, vault_config, token, strategy, gov, rando):
+    vault_config.updateManagementFee(vault, 0, {"from": gov})
+    vault_config.updatePerformanceFee(vault, 0, {"from": gov})
     vault.addStrategy(strategy, 100, 10, 20, 1000, {"from": gov})
     gain = 1000000
     assert token.balanceOf(strategy) == 0

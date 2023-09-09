@@ -12,10 +12,6 @@ contract Token is ERC20 {
         _mint(msg.sender, 30000 * 10**uint256(decimals_));
     }
 
-    function decimals() public view override returns (uint8) {
-        return decimals_;
-    }
-
     function _setBlocked(address user, bool value) public virtual {
         _blocked[user] = value;
     }

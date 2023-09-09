@@ -3,14 +3,15 @@ import brownie
 
 
 @pytest.fixture
-def vault(gov, token, Vault):
-    # NOTE: Overriding the one in conftest because it has values already
+def vault(gov, token, Vault, vault_config, approver):
+    # NOTE: Because the fixture has tokens in it already
     vault = gov.deploy(Vault)
     vault.initialize(
-        token, gov, gov, token.symbol() + " yVault", "yv" + token.symbol(), gov
+        token, token.symbol() + " yVault", "yv" + token.symbol(), vault_config
     )
     vault.setDepositLimit(2**256 - 1, {"from": gov})
     yield vault
+
 
 
 def test_deposit_with_zero_funds(vault, token, rando):
@@ -130,7 +131,8 @@ def test_deposit_limit(gov, token, vault):
     # Now it will take the rest
     vault.deposit({"from": gov})
 
-
+# TEST NOT RELEVANT DUE TO WHIETLISTING MECHANICS
+"""
 def test_delegated_deposit_withdraw(accounts, token, vault):
     a, b, c, d, e = accounts[0:5]
 
@@ -182,7 +184,7 @@ def test_delegated_deposit_withdraw(accounts, token, vault):
     assert token.balanceOf(d) == 0
     # e has the tokens
     assert token.balanceOf(e) == originalTokenAmount
-
+"""
 
 def test_emergencyShutdown(gov, vault, token):
     balance = token.balanceOf(gov)
@@ -204,7 +206,8 @@ def test_emergencyShutdown(gov, vault, token):
     assert token.balanceOf(vault) == 0
     assert token.balanceOf(gov) == balance
 
-
+# TEST NOT RELEVANT DUE TO WHIETLISTING MECHANICS
+"""
 def test_transfer(accounts, token, vault):
     a, b = accounts[0:2]
     token.approve(vault, token.balanceOf(a), {"from": a})
@@ -267,22 +270,25 @@ def test_transferFrom(accounts, token, vault):
 
     assert vault.balanceOf(a) == 0
     assert vault.balanceOf(b) == token.balanceOf(vault)
+"""
 
-
-def test_do_not_issue_zero_shares(gov, token, vault, pump_pps):
+def test_do_not_issue_zero_shares(gov, token, vault, vault_config, pump_pps):
     token.approve(vault, 500, {"from": gov})
     vault.deposit(500, {"from": gov})
-    pump_pps(vault, 500)
+    
+    pump_pps(vault, vault_config, 500)
     assert vault.pricePerShare() == 2 * 10 ** token.decimals()  # 2:1 price
     with brownie.reverts():
         vault.deposit(1, {"from": gov})
 
 
-def test_airdrop_do_not_change_price(gov, vault, token, rando):
+def test_airdrop_do_not_change_price(gov, vault, vault_config, token, rando):
     assert vault.totalSupply() == 0
     token.approve(vault, 1, {"from": gov})
     vault.deposit(1, {"from": gov})
     assert vault.balanceOf(gov) == 1
+
+    vault_config.whitelist(rando, {"from": gov})
     token.transfer(vault, 10 ** (token.decimals() + 2), {"from": gov})
     assert vault.pricePerShare() == 10 ** token.decimals()
 

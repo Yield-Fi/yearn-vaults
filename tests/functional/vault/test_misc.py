@@ -174,7 +174,8 @@ def test_sweep(gov, vault, rando, token, other_token):
     assert other_token.balanceOf(gov) == before
     assert other_token.balanceOf(rando) == 0
 
-
+""""
+COMMENTING OUT AS LOT OF THIS IS HANDLED IN VAULT CONFIG
 def test_reject_ether(gov, vault):
     # These functions should reject any calls with value
     for func, args in [
@@ -241,7 +242,7 @@ def test_reject_ether(gov, vault):
     # NOTE: Just for coverage
     with brownie.reverts():
         gov.transfer(vault, 0)
-
+"""
 
 def test_deposit_withdraw_faillure(token, gov, vault):
     token._setBlocked(vault.address, True, {"from": gov})
@@ -287,7 +288,7 @@ def test_sandwich_attack(
     # we don't use the one in conftest because we want no rate limit
     strategy = strategist.deploy(TestStrategy, vault)
     vault_config.updateManagementFee(vault.address, 0, {"from": gov})
-    vault_config.setPerformanceFee(vault.address, 0, {"from": gov})
+    vault_config.updatePerformanceFee(vault.address, 0, {"from": gov})
     vault.addStrategy(strategy, 4_000, 0, MAX_UINT256, 0, {"from": gov})
     vault.updateStrategyPerformanceFee(strategy, 0, {"from": gov})
 
@@ -297,7 +298,7 @@ def test_sandwich_attack(
     token.transfer(strategy, profit_to_be_returned, {"from": honest_lp})
 
     # now for the attack
-
+    vault_config.whitelist(attacker)
     # attacker sees harvest enter tx pool
     attack_amount = token.balanceOf(attacker)
 

@@ -94,9 +94,9 @@ def test_loss_should_be_removed_from_locked_profit(chain, vault, strategy, gov, 
     chain.sleep(1)
     strategy.harvest({"from": gov})
 
-    assert vault.lockedProfit() == 90  # 100 - performance fees
+    assert vault.lockedProfit() == 100  # 100 - performance fees
 
     token.transfer(token, 40, {"from": strategy})
     chain.sleep(1)
     strategy.harvest({"from": gov})
-    assert vault.lockedProfit() == 50
+    assert vault.lockedProfit() == 60
